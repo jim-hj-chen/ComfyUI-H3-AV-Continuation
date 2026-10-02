@@ -26,6 +26,14 @@
       "segment_prompt": {
         "name": "当前分段脚本",
         "tooltip": "当前段的原始脚本；若接入计划节点，必须与该循环序号对应的脚本一致。"
+      },
+      "audio_mode": {
+        "name": "音频模式",
+        "tooltip": "连接音频模式控制；同一循环内保持不变。"
+      },
+      "source_audio": {
+        "name": "加载的音频",
+        "tooltip": "音色参考或音频驱动画面使用的录音。"
       }
     },
     "outputs": {
@@ -56,6 +64,14 @@
       "6": {
         "name": "说话人音色参考",
         "tooltip": "首段音频的前至多 3 秒，用于后续段的说话人身份及音色参考。"
+      },
+      "7": {
+        "name": "本段驱动音频",
+        "tooltip": "按帧对齐的输入录音，含续写上下文及最终裁掉的网格补齐。"
+      },
+      "8": {
+        "name": "输出保留帧数",
+        "tooltip": "连接计划节点输出；驱动模式裁掉 H3 网格多余帧，保留输入语音。"
       }
     }
   },
@@ -212,6 +228,10 @@
       "create_av_preview": {
         "name": "生成含音频的分段预览",
         "tooltip": "额外生成含 AAC 音频的分段预览 MP4；最终成片仍使用 PCM 主音轨。"
+      },
+      "kept_frames": {
+        "name": "输出保留帧数",
+        "tooltip": "连接计划节点输出；驱动模式裁掉 H3 网格多余帧，保留输入语音。"
       }
     },
     "outputs": {
@@ -332,6 +352,10 @@
       "speaker_reference": {
         "name": "说话人音色参考",
         "tooltip": "首段音频的前至多 3 秒，用于后续段的说话人身份及音色参考。"
+      },
+      "driving_audio": {
+        "name": "本段驱动音频",
+        "tooltip": "按帧对齐的输入录音，含续写上下文及最终裁掉的网格补齐。"
       }
     },
     "outputs": {
@@ -342,6 +366,134 @@
       "1": {
         "name": "初始音画潜空间",
         "tooltip": "参考编码器返回的 H3 原生音画联合初始潜空间。"
+      }
+    }
+  },
+  "H3AVAudioModes": {
+    "display_name": "H3 音频模式 · 两个互斥开关",
+    "description": "独立互斥的音色参考与音频驱动开关。",
+    "inputs": {
+      "voice_reference": {
+        "name": "音色参考",
+        "tooltip": "按新台词生成语音，仅参考录音的音色；开启时自动关闭音频驱动。"
+      },
+      "audio_drive": {
+        "name": "音频驱动画面",
+        "tooltip": "固定输入语音，生成对应嘴型；开启时自动关闭音色参考。"
+      },
+      "audio": {
+        "name": "音频",
+        "tooltip": "连接加载音频；两个音频模式都关闭时跳过加载。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "音频模式",
+        "tooltip": "连接音频模式控制；同一循环内保持不变。"
+      },
+      "1": {
+        "name": "加载的音频",
+        "tooltip": "音色参考或音频驱动画面使用的录音。"
+      }
+    }
+  },
+  "H3AVAudioOutput": {
+    "display_name": "H3 选择成片音轨",
+    "description": "音频驱动模式保留输入录音并跳过音频解码。",
+    "inputs": {
+      "audio_mode": {
+        "name": "音频模式",
+        "tooltip": "连接音频模式控制；同一循环内保持不变。"
+      },
+      "generated_audio": {
+        "name": "模型生成音频",
+        "tooltip": "模型解码音频，仅在非驱动模式执行。"
+      },
+      "driving_audio": {
+        "name": "本段驱动音频",
+        "tooltip": "按帧对齐的输入录音，含续写上下文及最终裁掉的网格补齐。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "音频",
+        "tooltip": "连接加载音频；两个音频模式都关闭时跳过加载。"
+      }
+    }
+  },
+  "H3AVOptionalAudioRefine": {
+    "display_name": "H3 AudioRefine 开关",
+    "description": "按需执行音频细化；驱动模式始终跳过，保护输入录音。",
+    "inputs": {
+      "enabled": {
+        "name": "启用",
+        "tooltip": "默认关闭；未选中的分支不会执行。"
+      },
+      "audio_mode": {
+        "name": "音频模式",
+        "tooltip": "连接音频模式控制；同一循环内保持不变。"
+      },
+      "original": {
+        "name": "原始输入",
+        "tooltip": "关闭可选阶段时使用的原始输入。"
+      },
+      "refined": {
+        "name": "处理后输入",
+        "tooltip": "仅在开启时请求可选处理后的输入。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "音画联合潜空间",
+        "tooltip": "选中的视频及音频联合潜空间。"
+      }
+    }
+  },
+  "H3AVOptionalVideoRefine": {
+    "display_name": "H3 二采开关",
+    "description": "仅在开启时执行第二次画面采样。",
+    "inputs": {
+      "enabled": {
+        "name": "启用",
+        "tooltip": "默认关闭；未选中的分支不会执行。"
+      },
+      "original": {
+        "name": "原始输入",
+        "tooltip": "关闭可选阶段时使用的原始输入。"
+      },
+      "refined": {
+        "name": "处理后输入",
+        "tooltip": "仅在开启时请求可选处理后的输入。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "音画联合潜空间",
+        "tooltip": "选中的视频及音频联合潜空间。"
+      }
+    }
+  },
+  "H3AVOptionalUpscale": {
+    "display_name": "H3 超分开关",
+    "description": "仅在开启时执行 SeedVR2 超分。",
+    "inputs": {
+      "enabled": {
+        "name": "启用",
+        "tooltip": "默认关闭；未选中的分支不会执行。"
+      },
+      "original": {
+        "name": "原始输入",
+        "tooltip": "关闭可选阶段时使用的原始输入。"
+      },
+      "refined": {
+        "name": "处理后输入",
+        "tooltip": "仅在开启时请求可选处理后的输入。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "视频帧",
+        "tooltip": "选中的视频帧。"
       }
     }
   }

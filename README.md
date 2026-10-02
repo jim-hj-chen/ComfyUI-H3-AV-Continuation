@@ -8,6 +8,25 @@ ComfyUI nodes for long MiniMax H3 workflows: segment planning, multi-image refer
 
 Uses 24 fps. Video windows must satisfy `17k+5`; the planner accepts 124–362 frames. Continuation context also uses `17k+5`, defaulting to 22 frames (about 0.917 s). Requested durations round up to a compatible window, so actual new duration can be longer. Context supports continuity but does not guarantee lip sync, voice or presenter identity for every generation.
 
+## Audio modes and optional stages
+
+`H3AVAudioModes` has two separate toggles, **Voice Reference** and **Audio Drives Video**, both off by default. Enabling one in the canvas disables the other immediately. Conflicting API inputs are rejected. Connect Load Audio to `audio`, then connect `audio_mode` and `source_audio` to the planner. Both toggles off retains the existing joint generation path; the lazy audio input is not executed.
+
+- Voice Reference: the planner supplies the first three seconds of the loaded recording to `speaker_reference`. Connect this output to the reference node. H3 generates the script's new speech, borrowing speaker identity, timbre and accent. The recording is not replayed and the prompt's language is preserved.
+- Audio Drives Video: connect planner `driving_audio` to the reference node's matching input. The source audio is encoded into the joint latent with a native per-stream noise mask: video generates, audio stays fixed. Shot instructions should agree with the supplied recording. Mouth motion still depends on H3; exact phoneme alignment is not guaranteed.
+
+In Audio Drive mode, each segment keeps `round(seconds * 24)` new frames. The planner uses the committed output frame count as the source-audio cursor, prepends the matching source context, and pads only the H3 grid surplus. Connect `kept_frames` to the writer so that surplus is removed from video/audio together. This prevents cumulative drift. Supply a continuous recording covering the sum of segment durations; short recordings fail before sampling the affected segment, rather than stretching or repeating speech. Trailing audio beyond the configured durations is not included.
+
+Use `H3AVAudioOutput` before the writer: connect the mode, decoded model audio, and planner driving audio. It selects the original source recording in drive mode and skips audio decoding. The writer still converts it to frame-aligned stereo PCM and encodes AAC once at final assembly. Source speech is retained; output is not a byte-for-byte copy of the uploaded file.
+
+`H3AVOptionalVideoRefine`, `H3AVOptionalUpscale` and `H3AVOptionalAudioRefine` provide independent lazy switches, off by default. Connect the unprocessed input to `original` and the processed branch to `refined`. Keep stage nodes active; the switch decides which branch executes. AudioRefine is always skipped in Audio Drive mode, even if its switch is on. When retained, AudioRefine requires the external [ComfyUI-H3-AudioRefine pack](https://github.com/Adudeguyman/ComfyUI-H3-AudioRefine).
+
+For a faster baseline, use reference image sizing `match`, disable optional stages, and disable extra per-segment previews. Native H3 warns that `max` reference tokens can make each sampling step several times slower. The AudioRefine author's measurements are hardware-specific, and its frozen cache requires additional RAM/VRAM; it is an optional repair stage, not a long-video requirement.
+
+FFmpeg subprocesses and rawvideo pipe writes now have a 600-second limit and honor ComfyUI interruption. Override with `H3_FFMPEG_TIMEOUT_SECONDS` when a legitimately slow encode needs longer. Errors include the log path and preserve committed segments. This timeout does not terminate GPU sampling or fix a CUDA driver deadlock. Stage start/end messages identify whether time is spent in conditioning, sampling or output encoding.
+
+Existing node IDs, original socket positions and planner output slots 0–6 remain compatible. New planner outputs are 7 `driving_audio` and 8 `kept_frames`; all new inputs are appended and optional.
+
 ## Installation
 
 Clone or extract this repository into `ComfyUI/custom_nodes/ComfyUI-H3-AV-Continuation/`, with `__init__.py` directly inside that directory. Install dependencies using the same Python environment that runs ComfyUI:

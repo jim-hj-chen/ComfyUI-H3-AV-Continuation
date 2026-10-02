@@ -8,14 +8,13 @@ import math
 import os
 import re
 import shutil
-import subprocess
-import sys
 import tempfile
 import wave
 from pathlib import Path
 
 import numpy as np
 import folder_paths
+from .ffmpeg_runner import run_ffmpeg
 
 FPS = 24
 OUTPUT_RATE = 48000
@@ -67,11 +66,7 @@ def _atomic_json(path, data):
 
 
 def _run(cmd, log):
-    with log.open('wb') as dst:
-        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=dst)
-    if result.returncode:
-        tail = log.read_text(encoding='utf-8', errors='replace')[-3000:]
-        raise RuntimeError(f'FFmpeg 失败，退出码 {result.returncode}：{tail}')
+    run_ffmpeg(cmd, log)
 
 
 def _numpy(value):
@@ -114,24 +109,31 @@ def shift_timecodes(text, offset):
     return re.sub(r'(?<![\d:])(\d{2}):(\d{2}(?:\.\d+)?)(?![\d:])', replace, text)
 
 
-def prepare_prompt(text, index, frames, skip, overlap):
+def prepare_prompt(text, index, frames, skip, overlap, audio_mode='generated'):
     text = re.sub(r'final five frames', f'final {overlap} frames', text, flags=re.IGNORECASE)
     if index:
         text = shift_timecodes(text, skip / FPS)
         text = text.replace('Continuous natural speech begins at the first frame and runs through the last.',
                             'New dialogue starts immediately after the continuation context. Keep speech natural and synchronized.')
     header = (f'Generation window: {frames} frames at 24 fps ({frames / FPS:.6f} seconds). '
-              'Generate the video and its audible Mandarin speech jointly. '
+              'Generate video and audible speech in the language specified by the script jointly. '
               'Whenever the presenter is on camera speaking, her lips match the exact spoken words. '
               'Every <d> dialogue line is audible speech, not subtitles. No music.\n')
+    if audio_mode == 'audio_drive':
+        header = (f'Generation window: {frames} frames at 24 fps ({frames / FPS:.6f} seconds). '
+                  'The audio stream is supplied and fixed. Animate the speaking presenter to match its '
+                  'exact phonemes, timing, pauses and emotion. The supplied recording determines all speech; '
+                  'do not generate different dialogue or translate it. Shot text describes visuals.\n')
     if index:
         header += (f'<Video 1> and its paired <Audio 1> are the preceding segment\'s final {overlap} frames '
                    'and synchronized soundtrack. Preserve the same presenter, voice, camera state, and action. '
                    f'The first {skip / FPS:.6f} seconds reproduce that preceding AV context and will be removed together. '
                    'Do not speak the new dialogue during that context and do not repeat the preceding dialogue. '
                    'Begin the new script after it. All shot timecodes below already include this offset.\n')
-        header += ('<Audio 2> is a short voice reference from the first segment. '
-                   'Use its speaker identity and timbre for (S1), while speaking only this segment\'s new dialogue. '
+    if audio_mode != 'audio_drive' and (index or audio_mode == 'voice_reference'):
+        tag = 2 if index else 1
+        header += (f'<Audio {tag}> is a short speaker voice reference. '
+                   'Use its identity, timbre and accent for (S1), speaking only this segment\'s new dialogue. '
                    'Do not replay or quote the reference recording.\n')
     return header + text.strip()
 
@@ -145,14 +147,19 @@ class H3AVSegmentPlan:
             'seconds': ('FLOAT', {'forceInput': True}),
             'overlap_frames': ('INT', {'default': 22, 'min': 5, 'max': 90, 'step': 17}),
             'base_seed': ('INT', {'default': 1087183784971949, 'min': 0, 'max': 0xffffffffffffffff}),
-        }, 'optional': {'segment_prompt': ('STRING', {'forceInput': True})}}
-    RETURN_TYPES = ('STRING', 'INT', 'IMAGE', 'AUDIO', 'INT', 'INT', 'AUDIO')
-    RETURN_NAMES = ('prompt', 'window_frames', 'previous_frames', 'previous_audio', 'skip_frames', 'seed', 'speaker_reference')
+        }, 'optional': {'segment_prompt': ('STRING', {'forceInput': True}),
+                        'audio_mode': ('STRING', {'forceInput': True}),
+                        'source_audio': ('AUDIO',)}}
+    RETURN_TYPES = ('STRING', 'INT', 'IMAGE', 'AUDIO', 'INT', 'INT', 'AUDIO', 'AUDIO', 'INT')
+    RETURN_NAMES = ('prompt', 'window_frames', 'previous_frames', 'previous_audio', 'skip_frames', 'seed', 'speaker_reference', 'driving_audio', 'kept_frames')
     FUNCTION = 'plan'
     CATEGORY = CATEGORY
 
     def plan(self, loop_ctx, prompts, seconds, overlap_frames=22, base_seed=1087183784971949,
-             segment_prompt=None):
+             segment_prompt=None, audio_mode='generated', source_audio=None):
+        from .audio_modes import MODES, validate_audio, driving_window
+        if audio_mode not in MODES:
+            raise ValueError('无效音频模式。')
         directory, index, count = _context(loop_ctx)
         scripts = [s.strip() for s in str(prompts).split(DELIMITER)]
         if len(scripts) != count or any(not s for s in scripts):
@@ -162,11 +169,16 @@ class H3AVSegmentPlan:
         frames, skip = frame_plan(seconds, index, overlap_frames)
         directory.mkdir(parents=True, exist_ok=True)
         _space(directory)
-        previous_frames = previous_audio = speaker_reference = None
+        previous_frames = previous_audio = speaker_reference = driving_audio = None
+        offset_frames = 0
+        kept_frames = frames - skip
         if index:
             manifest = json.loads((directory / 'manifest.json').read_text(encoding='utf-8'))
             if len(manifest['segments']) != index or manifest['overlap_frames'] != overlap_frames:
                 raise ValueError('上一段尚未提交，或上下文帧数在循环中发生了变化。')
+            if manifest.get('audio_mode', 'generated') != audio_mode:
+                raise ValueError('音频模式不能在同一循环运行中改变。')
+            offset_frames = sum(item['output_frames'] for item in manifest['segments'])
             tail = directory / f'tail_{index - 1:05d}.npz'
             import torch
             with np.load(tail, allow_pickle=False) as data:
@@ -178,15 +190,26 @@ class H3AVSegmentPlan:
             with np.load(directory / 'speaker_reference.npz', allow_pickle=False) as data:
                 speaker_reference = {'waveform': torch.from_numpy(data['audio'].copy()),
                                      'sample_rate': int(data['sample_rate'])}
+        if audio_mode == 'voice_reference':
+            wave, rate = validate_audio(source_audio)
+            # References travel through every sampling step; keep the voice sample short.
+            speaker_reference = {'waveform': wave[..., :3 * rate].detach().cpu(), 'sample_rate': rate}
+        elif audio_mode == 'audio_drive':
+            kept_frames = round(float(seconds) * FPS)
+            if kept_frames < overlap_frames:
+                raise ValueError('驱动模式本段时长必须容纳续写上下文。')
+            driving_audio = driving_window(source_audio, offset_frames, kept_frames, frames, skip)
+            speaker_reference = None
         seed = (int(base_seed) + index) % (1 << 64)
-        prompt = prepare_prompt(scripts[index], index, frames, skip, overlap_frames)
+        prompt = prepare_prompt(scripts[index], index, frames, skip, overlap_frames, audio_mode)
         (directory / f'prompt_{index:05d}.txt').write_text(prompt, encoding='utf-8')
         _atomic_json(directory / f'plan_{index:05d}.json', {
             'index': index, 'count': count, 'seconds_requested': float(seconds),
             'window_frames': frames, 'skip_frames': skip, 'overlap_frames': overlap_frames,
-            'fps': FPS, 'seed': seed, 'output_seconds': (frames - skip) / FPS})
-        print(f'[H3AVSync] 段 {index + 1}/{count}: 窗口 {frames} 帧，去重 {skip} 帧，输出 {(frames - skip) / FPS:.6f}s')
-        return prompt, frames, previous_frames, previous_audio, skip, seed, speaker_reference
+            'fps': FPS, 'seed': seed, 'output_seconds': kept_frames / FPS,
+            'kept_frames': kept_frames, 'audio_mode': audio_mode, 'source_offset_frames': offset_frames})
+        print(f'[H3AVSync] 段 {index + 1}/{count}: 模式 {audio_mode}，窗口 {frames} 帧，去重 {skip} 帧，输出 {kept_frames / FPS:.6f}s', flush=True)
+        return prompt, frames, previous_frames, previous_audio, skip, seed, speaker_reference, driving_audio, kept_frames
 
 
 class H3AVPickPrompt:
@@ -312,6 +335,7 @@ class H3AVEncodeSegment:
         }, 'optional': {
             'continuation_images': ('IMAGE',),
             'create_av_preview': ('BOOLEAN', {'default': False}),
+            'kept_frames': ('INT', {'forceInput': True}),
         }}
     RETURN_TYPES = ('MIE_LOOP_CTX', 'STRING', 'STRING')
     RETURN_NAMES = ('loop_ctx', 'video_path', 'diagnostics')
@@ -320,7 +344,7 @@ class H3AVEncodeSegment:
 
     def encode(self, loop_ctx, images, audio, expected_frames, skip_frames,
                overlap_frames=22, crf=19, preset='medium', reject_silence=True,
-               continuation_images=None, create_av_preview=False):
+               continuation_images=None, create_av_preview=False, kept_frames=None):
         directory, index, count = _context(loop_ctx)
         directory.mkdir(parents=True, exist_ok=True)
         _space(directory)
@@ -340,13 +364,17 @@ class H3AVEncodeSegment:
             raise ValueError('无效的续写上下文帧数。')
         if int(skip_frames) != (overlap_frames if index else 0):
             raise ValueError('首段去重应为 0，后续段去重应等于上下文帧数。')
+        output_frames = frames - skip_frames if kept_frames is None else int(kept_frames)
+        if not overlap_frames <= output_frames <= frames - skip_frames:
+            raise ValueError('保留帧数必须能容纳续写上下文且不能超过生成窗口。')
+        output_end = skip_frames + output_frames
         arr, rate = _audio_array(audio)
         source_duration = arr.shape[-1] / rate
         mismatch = source_duration - frames / FPS
         if abs(mismatch) > 0.05:
             raise ValueError(f'本段音频 {source_duration:.6f}s 与画面 {frames / FPS:.6f}s 相差 {mismatch:.6f}s；拒绝用静音掩盖问题。')
         start = round(skip_frames * rate / FPS)
-        end = min(arr.shape[-1], round(frames * rate / FPS))
+        end = min(arr.shape[-1], round(output_end * rate / FPS))
         arr = arr[:, start:end]
         stats = audio_stats(arr)
         if reject_silence and stats['rms_dbfs'] < -65:
@@ -356,7 +384,6 @@ class H3AVEncodeSegment:
             _atomic_json(directory / f'rejected_{index:05d}.json', {
                 'reason': 'near_silence', 'sample_rate': rate, 'channels': arr.shape[0], **stats})
             raise ValueError(f'第 {index + 1} 段近乎静音（{stats["rms_dbfs"]:.1f} dBFS），已保留诊断原始音频；请重新生成。')
-        output_frames = frames - skip_frames
         target_samples = output_frames * (OUTPUT_RATE // FPS)
         manifest_path = directory / 'manifest.json'
         if index:
@@ -371,6 +398,12 @@ class H3AVEncodeSegment:
             manifest = {'run_id': loop_ctx['run_id'], 'count': count, 'fps': FPS,
                         'width': width, 'height': height, 'overlap_frames': overlap_frames,
                         'audio_rate': OUTPUT_RATE, 'segments': []}
+        plan_path = directory / f'plan_{index:05d}.json'
+        if plan_path.is_file():
+            audio_mode = json.loads(plan_path.read_text(encoding='utf-8')).get('audio_mode', 'generated')
+            if index and manifest.get('audio_mode', 'generated') != audio_mode:
+                raise ValueError('音频模式在循环中发生了变化。')
+            manifest['audio_mode'] = audio_mode
         video = directory / f'segment_{index:05d}.mp4'
         wav = directory / f'segment_{index:05d}.wav'
         tail = directory / f'tail_{index:05d}.npz'
@@ -394,34 +427,24 @@ class H3AVEncodeSegment:
                    '-preset', preset, '-crf', str(crf), '-pix_fmt', 'yuv420p',
                    '-movflags', '+faststart', '-f', 'mp4', str(vpart)]
             log_path = directory / f'video_{index:05d}.log'
-            with log_path.open('wb') as log:
-                proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=log)
-                try:
-                    for i in range(skip_frames, frames):
-                        frame = _numpy(images[i])
-                        if not np.isfinite(frame).all():
-                            raise ValueError(f'第 {i} 帧含 NaN/Inf。')
-                        piece = np.ascontiguousarray(np.clip(frame * 255 + 0.5, 0, 255).astype(np.uint8))
-                        proc.stdin.write(piece.tobytes())
-                    proc.stdin.close()
-                    code = proc.wait()
-                except BaseException:
-                    if proc.poll() is None:
-                        proc.kill()
-                    proc.wait()
-                    if isinstance(sys_exc := sys.exc_info()[1], BrokenPipeError):
-                        raise RuntimeError(log_path.read_text(encoding='utf-8', errors='replace')[-3000:]) from sys_exc
-                    raise
-            if code or not vpart.is_file() or vpart.stat().st_size == 0:
+            def raw_frames():
+                for i in range(skip_frames, output_end):
+                    frame = _numpy(images[i])
+                    if not np.isfinite(frame).all():
+                        raise ValueError(f'第 {i} 帧含 NaN/Inf。')
+                    piece = np.ascontiguousarray(np.clip(frame * 255 + 0.5, 0, 255).astype(np.uint8))
+                    yield piece.tobytes()
+            run_ffmpeg(cmd, log_path, frames=raw_frames())
+            if not vpart.is_file() or vpart.stat().st_size == 0:
                 raise RuntimeError(log_path.read_text(encoding='utf-8', errors='replace')[-3000:])
             # Tail timing follows video time, never the end of a possibly padded audio track.
             full_arr, _ = _audio_array(audio)
-            a0, a1 = round((frames - overlap_frames) * rate / FPS), round(frames * rate / FPS)
+            a0, a1 = round((output_end - overlap_frames) * rate / FPS), round(output_end * rate / FPS)
             tail_audio = full_arr[:, a0:min(a1, full_arr.shape[-1])]
             if tail_audio.shape[-1] < a1 - a0:
                 tail_audio = np.pad(tail_audio, ((0, 0), (0, a1 - a0 - tail_audio.shape[-1])))
             with tpart.open('wb') as dst:
-                tail_images = _numpy(context_images[-overlap_frames:])
+                tail_images = _numpy(context_images[output_end - overlap_frames:output_end])
                 if not np.isfinite(tail_images).all():
                     raise ValueError('续写参考画面含 NaN/Inf。')
                 np.savez(dst, images=tail_images, audio=tail_audio[None],
@@ -560,6 +583,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 from .workflow_tools import NODE_CLASS_MAPPINGS as _UI_NODES, NODE_DISPLAY_NAME_MAPPINGS as _UI_NAMES
 NODE_CLASS_MAPPINGS.update(_UI_NODES)
 NODE_DISPLAY_NAME_MAPPINGS.update(_UI_NAMES)
+from .audio_modes import NODE_CLASS_MAPPINGS as _AUDIO_NODES
+NODE_CLASS_MAPPINGS.update(_AUDIO_NODES)
 
 
 # Keep stable node IDs and socket keys for existing workflows.

@@ -44,6 +44,7 @@ class H3AVReferenceListToVideo:
             'previous_frames': ('IMAGE',),
             'previous_audio': ('AUDIO',),
             'speaker_reference': ('AUDIO',),
+            'driving_audio': ('AUDIO',),
         }}
 
     RETURN_TYPES = ('CONDITIONING', 'LATENT')
@@ -74,9 +75,12 @@ class H3AVReferenceListToVideo:
 
     def encode(self, clip, images, prompt, width, height, length,
                ref_image_size='match', vae=None, audio_vae=None,
-               previous_frames=None, previous_audio=None, speaker_reference=None):
+               previous_frames=None, previous_audio=None, speaker_reference=None, driving_audio=None):
+        import time
         from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo
         refs = self.load_references(images)
+        started = time.monotonic()
+        print(f'[H3AVSync] 参考条件编码开始：{len(refs)} 张图片，尺寸策略 {ref_image_size}。', flush=True)
         result = MiniMaxH3ReferenceToVideo.execute(
             clip=clip, prompt=prompt, width=width, height=height, length=length,
             ref_image_size=ref_image_size, vae=vae, audio_vae=audio_vae,
@@ -86,7 +90,27 @@ class H3AVReferenceListToVideo:
             ref_audios={'ref_audio_0': speaker_reference} if speaker_reference is not None else {},
         )
         # V3 NodeOutput is tuple-like through .result; accept old tuple returns too.
-        return tuple(result.result) if hasattr(result, 'result') else tuple(result)
+        positive, latent = tuple(result.result) if hasattr(result, 'result') else tuple(result)
+        if driving_audio is not None:
+            if audio_vae is None:
+                raise ValueError('音频驱动需要 H3 音频 VAE。')
+            from comfy_extras.nodes_minimax_h3 import _encode_ref_audio
+            from comfy.nested_tensor import NestedTensor
+            import torch
+            import torch.nn.functional as F
+            encoded, _ = _encode_ref_audio(audio_vae, driving_audio)
+            video, empty_audio = latent['samples'].unbind()
+            if encoded.shape[:-1] != empty_audio.shape[:-1] or abs(encoded.shape[-1] - empty_audio.shape[-1]) > 2:
+                raise ValueError('驱动音频 VAE 的时间维度与 H3 窗口不匹配。')
+            encoded = encoded[..., :empty_audio.shape[-1]]
+            encoded = F.pad(encoded, (0, empty_audio.shape[-1] - encoded.shape[-1]))
+            latent = latent.copy()
+            latent['samples'] = NestedTensor((video, encoded.to(empty_audio)))
+            latent['noise_mask'] = NestedTensor((
+                torch.ones((1, 1, *video.shape[2:]), dtype=torch.float32),
+                torch.zeros((1, 1, *empty_audio.shape[2:]), dtype=torch.float32)))
+        print(f'[H3AVSync] 参考条件编码完成：{time.monotonic() - started:.1f}s，开始采样。', flush=True)
+        return positive, latent
 
 
 NODE_CLASS_MAPPINGS = {

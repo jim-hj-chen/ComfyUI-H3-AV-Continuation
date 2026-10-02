@@ -46,15 +46,20 @@ class LocalizationContract(unittest.TestCase):
 
     def test_original_workflow_ids_and_socket_contract(self):
         expected = {
-            'H3AVSegmentPlan': ['loop_ctx', 'prompts', 'seconds', 'overlap_frames', 'base_seed', 'segment_prompt'],
+            'H3AVSegmentPlan': ['loop_ctx', 'prompts', 'seconds', 'overlap_frames', 'base_seed', 'segment_prompt', 'audio_mode', 'source_audio'],
             'H3AVPickPrompt': ['prompts', 'count', 'loop_ctx'],
             'H3AVFreezeAudio': ['latent'],
             'H3AVRestoreAudio': ['refined', 'original'],
             'H3AVContinuationGuide': ['loop_ctx', 'positive', 'latent', 'vae', 'audio_vae', 'previous_frames', 'previous_audio'],
-            'H3AVEncodeSegment': ['loop_ctx', 'images', 'audio', 'expected_frames', 'skip_frames', 'overlap_frames', 'crf', 'preset', 'reject_silence', 'continuation_images', 'create_av_preview'],
+            'H3AVEncodeSegment': ['loop_ctx', 'images', 'audio', 'expected_frames', 'skip_frames', 'overlap_frames', 'crf', 'preset', 'reject_silence', 'continuation_images', 'create_av_preview', 'kept_frames'],
             'H3AVConcat': ['loop_ctx', 'done'],
             'H3AVSamplingSteps': ['总步数', '一采步数'],
-            'H3AVReferenceListToVideo': ['clip', 'images', 'prompt', 'width', 'height', 'length', 'ref_image_size', 'vae', 'audio_vae', 'previous_frames', 'previous_audio', 'speaker_reference'],
+            'H3AVReferenceListToVideo': ['clip', 'images', 'prompt', 'width', 'height', 'length', 'ref_image_size', 'vae', 'audio_vae', 'previous_frames', 'previous_audio', 'speaker_reference', 'driving_audio'],
+            'H3AVAudioModes': ['voice_reference', 'audio_drive', 'audio'],
+            'H3AVAudioOutput': ['audio_mode', 'generated_audio', 'driving_audio'],
+            'H3AVOptionalAudioRefine': ['enabled', 'audio_mode', 'original', 'refined'],
+            'H3AVOptionalVideoRefine': ['enabled', 'original', 'refined'],
+            'H3AVOptionalUpscale': ['enabled', 'original', 'refined'],
         } if AV else {
             'H3DiskEncodeSegment': ['loop_ctx', 'images', 'audio', 'fps', 'crf', 'preset'],
             'H3DiskConcat': ['loop_ctx', 'done'],

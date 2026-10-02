@@ -26,6 +26,14 @@
       "segment_prompt": {
         "name": "Current Segment Script",
         "tooltip": "The selected raw script. If connected to the planner, it must match the script at the current index."
+      },
+      "audio_mode": {
+        "name": "Audio Mode",
+        "tooltip": "Connect the audio mode controls; keep it unchanged within a loop."
+      },
+      "source_audio": {
+        "name": "Loaded Audio",
+        "tooltip": "The recording for voice reference or audio-driven video."
       }
     },
     "outputs": {
@@ -56,6 +64,14 @@
       "6": {
         "name": "Speaker Voice Reference",
         "tooltip": "Up to the first three seconds of the first segment audio, used as a speaker identity reference in later segments."
+      },
+      "7": {
+        "name": "Driving Audio Window",
+        "tooltip": "Frame-aligned source recording with continuation context and discarded grid padding."
+      },
+      "8": {
+        "name": "Frames to Keep",
+        "tooltip": "Planner output; driving mode trims H3 grid surplus without losing source speech."
       }
     }
   },
@@ -212,6 +228,10 @@
       "create_av_preview": {
         "name": "Create Segment Preview with Audio",
         "tooltip": "Create an extra preview MP4 with AAC audio; final output still uses the PCM masters."
+      },
+      "kept_frames": {
+        "name": "Frames to Keep",
+        "tooltip": "Planner output; driving mode trims H3 grid surplus without losing source speech."
       }
     },
     "outputs": {
@@ -332,6 +352,10 @@
       "speaker_reference": {
         "name": "Speaker Voice Reference",
         "tooltip": "Up to the first three seconds of the first segment audio, used as a speaker identity reference in later segments."
+      },
+      "driving_audio": {
+        "name": "Driving Audio Window",
+        "tooltip": "Frame-aligned source recording with continuation context and discarded grid padding."
       }
     },
     "outputs": {
@@ -342,6 +366,134 @@
       "1": {
         "name": "Initial Joint Latent",
         "tooltip": "Initial native H3 joint video/audio latent returned by the reference encoder."
+      }
+    }
+  },
+  "H3AVAudioModes": {
+    "display_name": "H3 Audio Modes",
+    "description": "Separate mutually exclusive voice-reference and audio-drive switches.",
+    "inputs": {
+      "voice_reference": {
+        "name": "Voice Reference",
+        "tooltip": "Generate new scripted speech using a short source voice reference. Enabling this disables Audio Drive."
+      },
+      "audio_drive": {
+        "name": "Audio Drives Video",
+        "tooltip": "Keep the supplied speech fixed and generate matching mouth motion. Enabling this disables Voice Reference."
+      },
+      "audio": {
+        "name": "Audio",
+        "tooltip": "Connect Load Audio. Loading is skipped when both audio modes are off."
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "Audio Mode",
+        "tooltip": "Connect the audio mode controls; keep it unchanged within a loop."
+      },
+      "1": {
+        "name": "Loaded Audio",
+        "tooltip": "The recording for voice reference or audio-driven video."
+      }
+    }
+  },
+  "H3AVAudioOutput": {
+    "display_name": "H3 Select Output Audio",
+    "description": "Preserve source speech in Audio Drive mode and skip audio decoding.",
+    "inputs": {
+      "audio_mode": {
+        "name": "Audio Mode",
+        "tooltip": "Connect the audio mode controls; keep it unchanged within a loop."
+      },
+      "generated_audio": {
+        "name": "Generated Audio",
+        "tooltip": "Decoded model audio; evaluated only outside Audio Drive mode."
+      },
+      "driving_audio": {
+        "name": "Driving Audio Window",
+        "tooltip": "Frame-aligned source recording with continuation context and discarded grid padding."
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "Audio",
+        "tooltip": "Connect Load Audio. Loading is skipped when both audio modes are off."
+      }
+    }
+  },
+  "H3AVOptionalAudioRefine": {
+    "display_name": "H3 AudioRefine Switch",
+    "description": "Lazy optional audio refinement. Always skipped for fixed source audio.",
+    "inputs": {
+      "enabled": {
+        "name": "Enabled",
+        "tooltip": "Off by default. The unselected branch is not executed."
+      },
+      "audio_mode": {
+        "name": "Audio Mode",
+        "tooltip": "Connect the audio mode controls; keep it unchanged within a loop."
+      },
+      "original": {
+        "name": "Original",
+        "tooltip": "The input used when this optional stage is disabled."
+      },
+      "refined": {
+        "name": "Processed",
+        "tooltip": "The optional processed input, requested only when enabled."
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "Joint AV Latent",
+        "tooltip": "The selected joint video/audio latent."
+      }
+    }
+  },
+  "H3AVOptionalVideoRefine": {
+    "display_name": "H3 Second Pass Switch",
+    "description": "Execute the second video sampling pass only when enabled.",
+    "inputs": {
+      "enabled": {
+        "name": "Enabled",
+        "tooltip": "Off by default. The unselected branch is not executed."
+      },
+      "original": {
+        "name": "Original",
+        "tooltip": "The input used when this optional stage is disabled."
+      },
+      "refined": {
+        "name": "Processed",
+        "tooltip": "The optional processed input, requested only when enabled."
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "Joint AV Latent",
+        "tooltip": "The selected joint video/audio latent."
+      }
+    }
+  },
+  "H3AVOptionalUpscale": {
+    "display_name": "H3 Upscale Switch",
+    "description": "Execute SeedVR2 only when enabled.",
+    "inputs": {
+      "enabled": {
+        "name": "Enabled",
+        "tooltip": "Off by default. The unselected branch is not executed."
+      },
+      "original": {
+        "name": "Original",
+        "tooltip": "The input used when this optional stage is disabled."
+      },
+      "refined": {
+        "name": "Processed",
+        "tooltip": "The optional processed input, requested only when enabled."
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "Video Frames",
+        "tooltip": "The selected video frames."
       }
     }
   }
