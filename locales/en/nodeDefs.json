@@ -1,0 +1,348 @@
+{
+  "H3AVSegmentPlan": {
+    "display_name": "H3 Segment Planner",
+    "description": "Plan a 24 fps H3 generation window, script timing, deterministic seed and paired continuation context.",
+    "inputs": {
+      "loop_ctx": {
+        "name": "Loop Context",
+        "tooltip": "Connect the MieLoop v3 context for this run and segment index."
+      },
+      "prompts": {
+        "name": "All Segment Scripts",
+        "tooltip": "One STRING with exactly one nonempty script per loop segment, separated by ----------SEGMENT_SEPARATOR----------."
+      },
+      "seconds": {
+        "name": "New Segment Duration (s)",
+        "tooltip": "Requested new content duration. The actual duration is rounded to an H3-compatible frame window at 24 fps."
+      },
+      "overlap_frames": {
+        "name": "Continuation Context Frames",
+        "tooltip": "Shared video/audio context. Must be 17k+5, such as 5, 22 or 39; use the same value in the planner and writer."
+      },
+      "base_seed": {
+        "name": "Base Seed",
+        "tooltip": "Each segment uses (base seed + segment index) modulo 2^64."
+      },
+      "segment_prompt": {
+        "name": "Current Segment Script",
+        "tooltip": "The selected raw script. If connected to the planner, it must match the script at the current index."
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "Generation Prompt",
+        "tooltip": "Text conditioning prompt. The planner adds timing, joint AV and continuation instructions."
+      },
+      "1": {
+        "name": "Generation Window Frames",
+        "tooltip": "Total frames to generate, including continuation context after the first segment."
+      },
+      "2": {
+        "name": "Previous Video Context",
+        "tooltip": "Final context frames from the preceding segment; empty on the first segment."
+      },
+      "3": {
+        "name": "Previous Audio Context",
+        "tooltip": "Audio aligned with the preceding video context; empty on the first segment."
+      },
+      "4": {
+        "name": "Duplicate Context Frames to Remove",
+        "tooltip": "Zero for the first segment; equals context frames thereafter. Remove the matching audio interval too."
+      },
+      "5": {
+        "name": "Segment Seed",
+        "tooltip": "Deterministic seed derived from the base seed and current zero-based segment index."
+      },
+      "6": {
+        "name": "Speaker Voice Reference",
+        "tooltip": "Up to the first three seconds of the first segment audio, used as a speaker identity reference in later segments."
+      }
+    }
+  },
+  "H3AVPickPrompt": {
+    "display_name": "H3 Segment Prompt Selector",
+    "description": "Select the current script from a ComfyUI output list or a wrapped Python list using the MieLoop segment index.",
+    "inputs": {
+      "prompts": {
+        "name": "Split Segment Scripts",
+        "tooltip": "Connect a list of STRING scripts, one per segment, in generation order."
+      },
+      "count": {
+        "name": "Segment Count",
+        "tooltip": "Number of scripts; must agree with the MieLoop context."
+      },
+      "loop_ctx": {
+        "name": "Loop Context",
+        "tooltip": "Connect the MieLoop v3 context for this run and segment index."
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "Current Segment Script",
+        "tooltip": "The selected raw script. If connected to the planner, it must match the script at the current index."
+      }
+    }
+  },
+  "H3AVFreezeAudio": {
+    "display_name": "H3 Lock Audio for Video Refinement",
+    "description": "Create native per-stream noise masks so the second pass refines video while keeping audio fixed.",
+    "inputs": {
+      "latent": {
+        "name": "Joint Video and Audio Latent",
+        "tooltip": "Native H3 NestedTensor latent containing the video and audio streams."
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "Joint Video and Audio Latent",
+        "tooltip": "Native H3 NestedTensor latent containing the video and audio streams."
+      }
+    }
+  },
+  "H3AVRestoreAudio": {
+    "display_name": "H3 Restore Original Audio After Refinement",
+    "description": "Restore the first-pass audio stream into the refined joint latent after validating timing dimensions.",
+    "inputs": {
+      "refined": {
+        "name": "Refined Joint Latent",
+        "tooltip": "Second-pass output; its timing dimensions must match the original latent."
+      },
+      "original": {
+        "name": "Original Joint Latent",
+        "tooltip": "First-pass output providing the original audio stream to restore."
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "Joint Video and Audio Latent",
+        "tooltip": "Native H3 NestedTensor latent containing the video and audio streams."
+      }
+    }
+  },
+  "H3AVContinuationGuide": {
+    "display_name": "H3 Audio-Video Continuation Guide",
+    "description": "Use native MiniMaxH3AddGuide to anchor previous video and audio at frame zero; pass through on the first segment.",
+    "inputs": {
+      "loop_ctx": {
+        "name": "Loop Context",
+        "tooltip": "Connect the MieLoop v3 context for this run and segment index."
+      },
+      "positive": {
+        "name": "Positive Conditioning",
+        "tooltip": "H3 positive conditioning; the continuation guide adds the paired context at frame zero after the first segment."
+      },
+      "latent": {
+        "name": "Joint Video and Audio Latent",
+        "tooltip": "Native H3 NestedTensor latent containing the video and audio streams."
+      },
+      "vae": {
+        "name": "Video VAE",
+        "tooltip": "Native H3 video encoder/decoder required when using video guides or references."
+      },
+      "audio_vae": {
+        "name": "Audio VAE",
+        "tooltip": "Native H3 audio encoder/decoder required when using audio guides or references."
+      },
+      "previous_frames": {
+        "name": "Previous Video Context",
+        "tooltip": "Final context frames from the preceding segment; empty on the first segment."
+      },
+      "previous_audio": {
+        "name": "Previous Audio Context",
+        "tooltip": "Audio aligned with the preceding video context; empty on the first segment."
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "Positive Conditioning",
+        "tooltip": "H3 positive conditioning; the continuation guide adds the paired context at frame zero after the first segment."
+      }
+    }
+  },
+  "H3AVEncodeSegment": {
+    "display_name": "H3 Trim and Write Synchronized Segment",
+    "description": "Remove duplicate video/audio context together and save H.264 video, exact-length PCM audio and the next continuation tail.",
+    "inputs": {
+      "loop_ctx": {
+        "name": "Loop Context",
+        "tooltip": "Connect the MieLoop v3 context for this run and segment index."
+      },
+      "images": {
+        "name": "Video Frames",
+        "tooltip": "Decoded RGB IMAGE batch shaped [frames, height, width, 3]; H.264 requires even width and height."
+      },
+      "audio": {
+        "name": "Segment Audio",
+        "tooltip": "Decoded AUDIO with waveform [1, channels, samples] and a positive sample_rate, from the same segment as the video."
+      },
+      "expected_frames": {
+        "name": "Planned Window Frames",
+        "tooltip": "Connect the planner window_frames output; decoded frame count must match exactly."
+      },
+      "skip_frames": {
+        "name": "Duplicate Context Frames to Remove",
+        "tooltip": "Zero for the first segment; equals context frames thereafter. Remove the matching audio interval too."
+      },
+      "overlap_frames": {
+        "name": "Continuation Context Frames",
+        "tooltip": "Shared video/audio context. Must be 17k+5, such as 5, 22 or 39; use the same value in the planner and writer."
+      },
+      "crf": {
+        "name": "H.264 Quality (CRF)",
+        "tooltip": "Constant rate factor, 0–51. Smaller values improve quality and increase file size; default 19."
+      },
+      "preset": {
+        "name": "H.264 Encoding Preset",
+        "tooltip": "medium is balanced; fast/veryfast reduce encoding time; slow spends more time on compression at the same CRF.",
+        "options": {
+          "medium": "Balanced (medium)",
+          "fast": "Fast (fast)",
+          "veryfast": "Very fast (veryfast)",
+          "slow": "Better compression (slow)"
+        }
+      },
+      "reject_silence": {
+        "name": "Reject Near-Silent Audio",
+        "tooltip": "Reject a segment below -65 dBFS RMS and preserve raw audio diagnostics; disable deliberately for silent scenes."
+      },
+      "continuation_images": {
+        "name": "Video Frames for Next Continuation",
+        "tooltip": "Optional context source with the same frame count. Useful for keeping first-pass frames while writing refined video."
+      },
+      "create_av_preview": {
+        "name": "Create Segment Preview with Audio",
+        "tooltip": "Create an extra preview MP4 with AAC audio; final output still uses the PCM masters."
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "Loop Context",
+        "tooltip": "Connect the MieLoop v3 context for this run and segment index."
+      },
+      "1": {
+        "name": "Video-Only Segment Path",
+        "tooltip": "Absolute path to the video-only segment master; its paired PCM soundtrack is stored in a separate WAV."
+      },
+      "2": {
+        "name": "Segment Diagnostics (JSON)",
+        "tooltip": "JSON containing frame counts, source audio duration error, output samples, peak, RMS and clipping fraction."
+      }
+    }
+  },
+  "H3AVConcat": {
+    "display_name": "H3 Assemble Synchronized Final Video",
+    "description": "Copy H.264 segments and encode the concatenated PCM audio to AAC once for the final MP4.",
+    "inputs": {
+      "loop_ctx": {
+        "name": "Loop Context",
+        "tooltip": "Connect the MieLoop v3 context for this run and segment index."
+      },
+      "done": {
+        "name": "Loop Finished",
+        "tooltip": "Connect the MieLoop completion flag; concatenation runs only when true and all segments are committed."
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "Final MP4 Path",
+        "tooltip": "Absolute path to the synchronized final H.264/AAC MP4."
+      }
+    }
+  },
+  "H3AVSamplingSteps": {
+    "display_name": "H3 Two-Pass Sampling Step Splitter",
+    "description": "Split a total sampling budget into first-pass and second-pass step counts.",
+    "inputs": {
+      "总步数": {
+        "name": "Total Sampling Steps",
+        "tooltip": "Total steps across both passes; must be greater than the first-pass count and no more than 10000."
+      },
+      "一采步数": {
+        "name": "First-Pass Steps",
+        "tooltip": "Steps for the first pass; must be at least 1 and below total steps."
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "First-Pass Steps",
+        "tooltip": "Steps for the first pass; must be at least 1 and below total steps."
+      },
+      "1": {
+        "name": "Second-Pass Steps",
+        "tooltip": "Computed as total steps minus first-pass steps; always at least 1."
+      },
+      "2": {
+        "name": "Total Sampling Steps",
+        "tooltip": "Total steps across both passes; must be greater than the first-pass count and no more than 10000."
+      }
+    }
+  },
+  "H3AVReferenceListToVideo": {
+    "display_name": "H3 Multi-Reference Video Conditioning",
+    "description": "Load 1–9 IMAGE_LIST paths as separate native H3 references, with optional video and voice context.",
+    "inputs": {
+      "clip": {
+        "name": "H3 Text Encoder",
+        "tooltip": "The CLIP object loaded for the native H3 text/reference encoder."
+      },
+      "images": {
+        "name": "Reference Image List",
+        "tooltip": "IMAGE_LIST dictionary with items: a list of 1–9 objects containing an existing local image path. This is not an IMAGE tensor batch."
+      },
+      "prompt": {
+        "name": "Generation Prompt",
+        "tooltip": "Text conditioning prompt. The planner adds timing, joint AV and continuation instructions."
+      },
+      "width": {
+        "name": "Video Width",
+        "tooltip": "Target video width in pixels; use multiples of 32 for this reference encoder."
+      },
+      "height": {
+        "name": "Video Height",
+        "tooltip": "Target video height in pixels; use multiples of 32 for this reference encoder."
+      },
+      "length": {
+        "name": "Generation Window Frames",
+        "tooltip": "Total generated frames, not seconds. For segmented continuation, connect the planner window_frames output."
+      },
+      "ref_image_size": {
+        "name": "Reference Image Sizing",
+        "tooltip": "match uses the target dimensions; max delegates the maximum reference sizing strategy to the native H3 encoder.",
+        "options": {
+          "match": "Match target dimensions",
+          "max": "Native maximum reference size"
+        }
+      },
+      "vae": {
+        "name": "Video VAE",
+        "tooltip": "Native H3 video encoder/decoder required when using video guides or references."
+      },
+      "audio_vae": {
+        "name": "Audio VAE",
+        "tooltip": "Native H3 audio encoder/decoder required when using audio guides or references."
+      },
+      "previous_frames": {
+        "name": "Previous Video Context",
+        "tooltip": "Final context frames from the preceding segment; empty on the first segment."
+      },
+      "previous_audio": {
+        "name": "Previous Audio Context",
+        "tooltip": "Audio aligned with the preceding video context; empty on the first segment."
+      },
+      "speaker_reference": {
+        "name": "Speaker Voice Reference",
+        "tooltip": "Up to the first three seconds of the first segment audio, used as a speaker identity reference in later segments."
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "Positive Conditioning",
+        "tooltip": "H3 positive conditioning; the continuation guide adds the paired context at frame zero after the first segment."
+      },
+      "1": {
+        "name": "Initial Joint Latent",
+        "tooltip": "Initial native H3 joint video/audio latent returned by the reference encoder."
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "id": "ComfyUI-H3-AV-Continuation",
+  "legacyTitles": {
+    "H3AVSegmentPlan": "H3 分段计划与上一段音画上下文",
+    "H3AVPickPrompt": "H3 按循环序号取一段提示词（支持列表输出）",
+    "H3AVFreezeAudio": "H3 二采冻结音频（只重绘画面）",
+    "H3AVRestoreAudio": "H3 二采后恢复原音频（保持时间维度）",
+    "H3AVContinuationGuide": "H3 原生音画联合续写锚定",
+    "H3AVEncodeSegment": "H3 按帧裁剪与分段落盘（PCM音轨）",
+    "H3AVConcat": "H3 拼接画面与连续音轨（仅编码一次AAC）",
+    "H3AVSamplingSteps": "采样步数 · 总数 / 一采 / 二采",
+    "H3AVReferenceListToVideo": "H3 参考图自动适配"
+  }
+}

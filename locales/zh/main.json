@@ -1,0 +1,13 @@
+{
+  "nodeCategories": {
+    "H3 AV Continuation": "H3 音画同步续写",
+    "Planning": "生成计划",
+    "Refinement": "画面精修",
+    "Output": "视频输出",
+    "Controls": "采样控制",
+    "References": "参考条件"
+  },
+  "settingsCategories": {
+    "H3 AV Continuation": "H3 音画同步续写"
+  }
+}

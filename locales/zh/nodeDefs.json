@@ -1,0 +1,348 @@
+{
+  "H3AVSegmentPlan": {
+    "display_name": "H3 分段生成计划",
+    "description": "规划 24 fps H3 生成窗口、脚本时序、确定性种子及成对的音画续写上下文。",
+    "inputs": {
+      "loop_ctx": {
+        "name": "循环上下文",
+        "tooltip": "连接 MieLoop v3 的循环上下文，用于识别本次运行及当前分段序号。"
+      },
+      "prompts": {
+        "name": "全部分段脚本",
+        "tooltip": "一个 STRING，使用 ----------SEGMENT_SEPARATOR---------- 分隔，每个循环段对应一份非空脚本。"
+      },
+      "seconds": {
+        "name": "本段新增时长（秒）",
+        "tooltip": "本段新增内容的目标时长；实际时长按 24 fps 对齐至 H3 支持的帧数窗口。"
+      },
+      "overlap_frames": {
+        "name": "续写上下文帧数",
+        "tooltip": "上一段承接音画的帧数，必须为 17k+5，如 5、22、39；计划与写出节点须保持一致。"
+      },
+      "base_seed": {
+        "name": "基础种子",
+        "tooltip": "每段种子为（基础种子 + 从 0 开始的段序号）对 2^64 取模。"
+      },
+      "segment_prompt": {
+        "name": "当前分段脚本",
+        "tooltip": "当前段的原始脚本；若接入计划节点，必须与该循环序号对应的脚本一致。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "生成提示词",
+        "tooltip": "文本条件提示词；计划节点会加入时序、音画联合生成及续写指令。"
+      },
+      "1": {
+        "name": "生成窗口帧数",
+        "tooltip": "本段总生成帧数；从第二段起包含续写上下文。"
+      },
+      "2": {
+        "name": "上一段画面上下文",
+        "tooltip": "上一段末尾的上下文画面；首段为空。"
+      },
+      "3": {
+        "name": "上一段音频上下文",
+        "tooltip": "与上一段画面上下文严格对齐的音频；首段为空。"
+      },
+      "4": {
+        "name": "需去除的重复上下文帧数",
+        "tooltip": "首段为 0，后续段等于上下文帧数；写出时同时去除对应音频区间。"
+      },
+      "5": {
+        "name": "本段种子",
+        "tooltip": "由基础种子与当前从 0 开始的段序号计算出的确定性种子。"
+      },
+      "6": {
+        "name": "说话人音色参考",
+        "tooltip": "首段音频的前至多 3 秒，用于后续段的说话人身份及音色参考。"
+      }
+    }
+  },
+  "H3AVPickPrompt": {
+    "display_name": "H3 当前分段提示词选择",
+    "description": "根据 MieLoop 段序号，从 ComfyUI 列表输出或单层包裹的 Python 列表中选择当前段脚本。",
+    "inputs": {
+      "prompts": {
+        "name": "已分割的分段脚本",
+        "tooltip": "连接按生成顺序排列的 STRING 脚本列表，每段一项。"
+      },
+      "count": {
+        "name": "分段总数",
+        "tooltip": "提示词总段数，须与 MieLoop 上下文的总段数一致。"
+      },
+      "loop_ctx": {
+        "name": "循环上下文",
+        "tooltip": "连接 MieLoop v3 的循环上下文，用于识别本次运行及当前分段序号。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "当前分段脚本",
+        "tooltip": "当前段的原始脚本；若接入计划节点，必须与该循环序号对应的脚本一致。"
+      }
+    }
+  },
+  "H3AVFreezeAudio": {
+    "display_name": "H3 视频精修时锁定音频",
+    "description": "创建原生分流噪声掩码，使二采精修画面时保持音频不变。",
+    "inputs": {
+      "latent": {
+        "name": "音画联合潜空间",
+        "tooltip": "H3 原生 NestedTensor 潜空间，内含视频流和音频流。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "音画联合潜空间",
+        "tooltip": "H3 原生 NestedTensor 潜空间，内含视频流和音频流。"
+      }
+    }
+  },
+  "H3AVRestoreAudio": {
+    "display_name": "H3 精修后恢复原始音频",
+    "description": "校验时间维度后，将一采原始音频流恢复到二采的音画联合潜空间中。",
+    "inputs": {
+      "refined": {
+        "name": "二次采样后的音画潜空间",
+        "tooltip": "二采输出，时间维度必须与原始潜空间一致。"
+      },
+      "original": {
+        "name": "原始音画潜空间",
+        "tooltip": "一采输出，提供需要恢复的原始音频流。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "音画联合潜空间",
+        "tooltip": "H3 原生 NestedTensor 潜空间，内含视频流和音频流。"
+      }
+    }
+  },
+  "H3AVContinuationGuide": {
+    "display_name": "H3 音画续写锚定",
+    "description": "调用原生 MiniMaxH3AddGuide，在第 0 帧锚定上一段画面与音频；首段直接传递条件。",
+    "inputs": {
+      "loop_ctx": {
+        "name": "循环上下文",
+        "tooltip": "连接 MieLoop v3 的循环上下文，用于识别本次运行及当前分段序号。"
+      },
+      "positive": {
+        "name": "正向条件",
+        "tooltip": "H3 正向条件；续写锚定节点从第二段起在第 0 帧加入配对的音画上下文。"
+      },
+      "latent": {
+        "name": "音画联合潜空间",
+        "tooltip": "H3 原生 NestedTensor 潜空间，内含视频流和音频流。"
+      },
+      "vae": {
+        "name": "视频 VAE",
+        "tooltip": "H3 原生视频编码器/解码器，用于视频引导或参考图像。"
+      },
+      "audio_vae": {
+        "name": "音频 VAE",
+        "tooltip": "H3 原生音频编码器/解码器，用于音频引导或参考。"
+      },
+      "previous_frames": {
+        "name": "上一段画面上下文",
+        "tooltip": "上一段末尾的上下文画面；首段为空。"
+      },
+      "previous_audio": {
+        "name": "上一段音频上下文",
+        "tooltip": "与上一段画面上下文严格对齐的音频；首段为空。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "正向条件",
+        "tooltip": "H3 正向条件；续写锚定节点从第二段起在第 0 帧加入配对的音画上下文。"
+      }
+    }
+  },
+  "H3AVEncodeSegment": {
+    "display_name": "H3 同步裁剪并保存分段",
+    "description": "同时去除重复音画上下文，保存 H.264 画面、精确长度 PCM 音轨及下一段续写所需末尾上下文。",
+    "inputs": {
+      "loop_ctx": {
+        "name": "循环上下文",
+        "tooltip": "连接 MieLoop v3 的循环上下文，用于识别本次运行及当前分段序号。"
+      },
+      "images": {
+        "name": "视频帧",
+        "tooltip": "解码后的 RGB IMAGE 批次，形状为 [帧数, 高, 宽, 3]；H.264 要求宽高为偶数。"
+      },
+      "audio": {
+        "name": "本段音频",
+        "tooltip": "与画面同段的解码 AUDIO，含 [1, 声道, 采样点] waveform 和正数 sample_rate。"
+      },
+      "expected_frames": {
+        "name": "计划窗口帧数",
+        "tooltip": "连接计划节点的 window_frames 输出；解码帧数必须完全匹配。"
+      },
+      "skip_frames": {
+        "name": "需去除的重复上下文帧数",
+        "tooltip": "首段为 0，后续段等于上下文帧数；写出时同时去除对应音频区间。"
+      },
+      "overlap_frames": {
+        "name": "续写上下文帧数",
+        "tooltip": "上一段承接音画的帧数，必须为 17k+5，如 5、22、39；计划与写出节点须保持一致。"
+      },
+      "crf": {
+        "name": "H.264 质量（CRF）",
+        "tooltip": "恒定质量系数，范围 0–51；数值越小质量越高、文件越大，默认 19。"
+      },
+      "preset": {
+        "name": "H.264 编码速度预设",
+        "tooltip": "medium 为均衡；fast/veryfast 缩短编码时间；slow 在相同 CRF 下花更多时间改善压缩。",
+        "options": {
+          "medium": "均衡（medium）",
+          "fast": "快速（fast）",
+          "veryfast": "极快（veryfast）",
+          "slow": "更高压缩效率（slow）"
+        }
+      },
+      "reject_silence": {
+        "name": "拒绝近乎静音的音频",
+        "tooltip": "RMS 低于 -65 dBFS 时拒绝写出该段并保留原始音频诊断；静音场景可主动关闭。"
+      },
+      "continuation_images": {
+        "name": "供下一段续写的参考画面",
+        "tooltip": "可选上下文来源，须与输出帧数一致；适合输出二采画面时保留一采画面用于续写。"
+      },
+      "create_av_preview": {
+        "name": "生成含音频的分段预览",
+        "tooltip": "额外生成含 AAC 音频的分段预览 MP4；最终成片仍使用 PCM 主音轨。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "循环上下文",
+        "tooltip": "连接 MieLoop v3 的循环上下文，用于识别本次运行及当前分段序号。"
+      },
+      "1": {
+        "name": "仅含画面的分段路径",
+        "tooltip": "仅含画面的分段主文件绝对路径；配对的 PCM 音轨另存于 WAV。"
+      },
+      "2": {
+        "name": "分段诊断（JSON）",
+        "tooltip": "JSON 诊断，包含帧数、源音频时长偏差、输出采样点、峰值、RMS 及削波比例。"
+      }
+    }
+  },
+  "H3AVConcat": {
+    "display_name": "H3 合成音画同步成片",
+    "description": "直接复制 H.264 分段画面，将拼接后的 PCM 连续音轨统一编码一次 AAC，生成最终 MP4。",
+    "inputs": {
+      "loop_ctx": {
+        "name": "循环上下文",
+        "tooltip": "连接 MieLoop v3 的循环上下文，用于识别本次运行及当前分段序号。"
+      },
+      "done": {
+        "name": "循环已完成",
+        "tooltip": "连接 MieLoop 的完成标记；仅在值为真且所有段已提交时执行拼接。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "最终 MP4 路径",
+        "tooltip": "音画同步的最终 H.264/AAC MP4 的绝对路径。"
+      }
+    }
+  },
+  "H3AVSamplingSteps": {
+    "display_name": "H3 两阶段采样步数分配",
+    "description": "将总采样步数分配为一采与二采两个阶段的步数。",
+    "inputs": {
+      "总步数": {
+        "name": "总采样步数",
+        "tooltip": "两次采样的总步数；必须大于一采步数且不超过 10000。"
+      },
+      "一采步数": {
+        "name": "一次采样步数",
+        "tooltip": "一采使用的步数，至少为 1 且小于总步数。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "一次采样步数",
+        "tooltip": "一采使用的步数，至少为 1 且小于总步数。"
+      },
+      "1": {
+        "name": "二次采样步数",
+        "tooltip": "等于总步数减去一采步数，至少为 1。"
+      },
+      "2": {
+        "name": "总采样步数",
+        "tooltip": "两次采样的总步数；必须大于一采步数且不超过 10000。"
+      }
+    }
+  },
+  "H3AVReferenceListToVideo": {
+    "display_name": "H3 多参考图视频条件编码",
+    "description": "读取 IMAGE_LIST 中的 1–9 个图片路径，作为独立的原生 H3 参考图编码，可附加视频与音色上下文。",
+    "inputs": {
+      "clip": {
+        "name": "H3 文本编码器",
+        "tooltip": "供原生 H3 文本与参考编码使用的 CLIP 对象。"
+      },
+      "images": {
+        "name": "参考图片列表",
+        "tooltip": "IMAGE_LIST 字典，其 items 是包含 1–9 个对象的列表，每个对象含有效的本地图片 path；不是 IMAGE 张量批次。"
+      },
+      "prompt": {
+        "name": "生成提示词",
+        "tooltip": "文本条件提示词；计划节点会加入时序、音画联合生成及续写指令。"
+      },
+      "width": {
+        "name": "视频宽度",
+        "tooltip": "目标视频宽度，单位为像素；此参考编码节点按 32 的倍数设置。"
+      },
+      "height": {
+        "name": "视频高度",
+        "tooltip": "目标视频高度，单位为像素；此参考编码节点按 32 的倍数设置。"
+      },
+      "length": {
+        "name": "生成窗口帧数",
+        "tooltip": "总生成帧数，单位不是秒；分段续写时连接计划节点的 window_frames 输出。"
+      },
+      "ref_image_size": {
+        "name": "参考图尺寸策略",
+        "tooltip": "match 按目标尺寸适配；max 使用原生 H3 编码器的最大参考尺寸策略。",
+        "options": {
+          "match": "匹配目标尺寸",
+          "max": "原生最大参考尺寸"
+        }
+      },
+      "vae": {
+        "name": "视频 VAE",
+        "tooltip": "H3 原生视频编码器/解码器，用于视频引导或参考图像。"
+      },
+      "audio_vae": {
+        "name": "音频 VAE",
+        "tooltip": "H3 原生音频编码器/解码器，用于音频引导或参考。"
+      },
+      "previous_frames": {
+        "name": "上一段画面上下文",
+        "tooltip": "上一段末尾的上下文画面；首段为空。"
+      },
+      "previous_audio": {
+        "name": "上一段音频上下文",
+        "tooltip": "与上一段画面上下文严格对齐的音频；首段为空。"
+      },
+      "speaker_reference": {
+        "name": "说话人音色参考",
+        "tooltip": "首段音频的前至多 3 秒，用于后续段的说话人身份及音色参考。"
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "正向条件",
+        "tooltip": "H3 正向条件；续写锚定节点从第二段起在第 0 帧加入配对的音画上下文。"
+      },
+      "1": {
+        "name": "初始音画潜空间",
+        "tooltip": "参考编码器返回的 H3 原生音画联合初始潜空间。"
+      }
+    }
+  }
+}
