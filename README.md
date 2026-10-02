@@ -257,13 +257,13 @@ Output directory: `ComfyUI/output/h3_av_sync/<run_id>/`, kept compatible with th
 
 `segment_*.mp4` contains video only; paired `segment_*.wav` files contain 48 kHz stereo PCM. `tail_*.npz` stores continuation context, normally retaining only the latest tail. `speaker_reference.npz` stores the first voice reference. `plan_*.json` and `prompt_*.txt` record plans and actual prompts. `final_info.json` records final frame/audio information. Optional previews are `preview_*.mp4`.
 
-Source audio/video duration mismatch above 0.05 s is rejected. There is no time stretching or silent fallback for significant mismatch; small tail differences within tolerance are padded/trimmed to exact frame boundaries and recorded. Silence rejection preserves `rejected_*.f32le` plus JSON diagnostics. Planner instructions currently target Mandarin speech; switching interface language does not rewrite generated content.
+Source audio/video duration mismatch above 0.05 s is rejected. There is no time stretching or silent fallback for significant mismatch; small tail differences within tolerance are padded/trimmed to exact frame boundaries and recorded. Silence rejection preserves `rejected_*.f32le` plus JSON diagnostics. Planner instructions preserve the script's speech language; switching interface language does not rewrite generated content.
 
 ## Development checks
 
 ```bash
 python -m unittest discover -s tests -v
-node --test tests/localization.test.mjs
+node --test tests/*.test.mjs
 ```
 
 Tests cover bilingual node/parameter/option completeness, stable node/socket compatibility, language switching without changing connections or values, and core planning or loop-control branches. Real model generation requires ComfyUI with H3 and MieLoop installed.

@@ -63,7 +63,7 @@
       },
       "6": {
         "name": "Speaker Voice Reference",
-        "tooltip": "Up to the first three seconds of the first segment audio, used as a speaker identity reference in later segments."
+        "tooltip": "Up to three seconds from the first segment by default, or from the loaded recording in Voice Reference mode."
       },
       "7": {
         "name": "Driving Audio Window",
@@ -351,7 +351,7 @@
       },
       "speaker_reference": {
         "name": "Speaker Voice Reference",
-        "tooltip": "Up to the first three seconds of the first segment audio, used as a speaker identity reference in later segments."
+        "tooltip": "Up to three seconds from the first segment by default, or from the loaded recording in Voice Reference mode."
       },
       "driving_audio": {
         "name": "Driving Audio Window",

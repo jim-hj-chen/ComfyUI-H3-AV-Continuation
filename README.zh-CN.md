@@ -259,13 +259,13 @@ Windows 便携版（在便携版根目录执行）：
 
 `segment_*.mp4` 是仅含画面的主文件，配对 `segment_*.wav` 是 48 kHz 双声道 PCM 音轨；`tail_*.npz` 存续写上下文，通常仅保留最新一段；`speaker_reference.npz` 存首段音色参考；`plan_*.json` 与 `prompt_*.txt` 存计划与实际提示词；`final_info.json` 存成片帧数与音轨信息。启用预览后额外生成 `preview_*.mp4`。
 
-源音频与画面时长偏差超过 0.05 秒会报错；不会使用静音掩盖明显错配，也不做音频时间拉伸。允许范围内的短尾差异会按帧边界补齐或裁剪并记录诊断。静音拒绝会保存 `rejected_*.f32le` 和对应 JSON。计划生成的指令目前面向中文口播，切换界面语言不会改写生成内容。
+源音频与画面时长偏差超过 0.05 秒会报错；不会使用静音掩盖明显错配，也不做音频时间拉伸。允许范围内的短尾差异会按帧边界补齐或裁剪并记录诊断。静音拒绝会保存 `rejected_*.f32le` 和对应 JSON。计划生成的指令保留脚本指定的口播语言，切换界面语言不会改写生成内容。
 
 ## 开发验证
 
 ```bash
 python -m unittest discover -s tests -v
-node --test tests/localization.test.mjs
+node --test tests/*.test.mjs
 ```
 
 测试覆盖双语节点/参数/选项完整性、旧节点与参数兼容、语言切换保留连接和值、主要计划或循环控制分支。真实模型生成需在安装了 H3 与 MieLoop 的 ComfyUI 中验证。
