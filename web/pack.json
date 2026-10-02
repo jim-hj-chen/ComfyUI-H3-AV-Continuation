@@ -9,11 +9,6 @@
     "H3AVEncodeSegment": "H3 按帧裁剪与分段落盘（PCM音轨）",
     "H3AVConcat": "H3 拼接画面与连续音轨（仅编码一次AAC）",
     "H3AVSamplingSteps": "采样步数 · 总数 / 一采 / 二采",
-    "H3AVReferenceListToVideo": "H3 参考图自动适配",
-    "H3AVAudioModes": "H3 音频模式 · 两个互斥开关",
-    "H3AVAudioOutput": "H3 选择成片音轨",
-    "H3AVOptionalAudioRefine": "H3 AudioRefine 开关",
-    "H3AVOptionalVideoRefine": "H3 二采开关",
-    "H3AVOptionalUpscale": "H3 超分开关"
+    "H3AVReferenceListToVideo": "H3 参考图自动适配"
   }
 }

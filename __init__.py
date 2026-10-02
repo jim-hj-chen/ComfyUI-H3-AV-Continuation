@@ -149,11 +149,17 @@ class H3AVSegmentPlan:
             'base_seed': ('INT', {'default': 1087183784971949, 'min': 0, 'max': 0xffffffffffffffff}),
         }, 'optional': {'segment_prompt': ('STRING', {'forceInput': True}),
                         'audio_mode': ('STRING', {'forceInput': True}),
-                        'source_audio': ('AUDIO',)}}
+                        'source_audio': ('AUDIO', {'lazy': True})}}
     RETURN_TYPES = ('STRING', 'INT', 'IMAGE', 'AUDIO', 'INT', 'INT', 'AUDIO', 'AUDIO', 'INT')
     RETURN_NAMES = ('prompt', 'window_frames', 'previous_frames', 'previous_audio', 'skip_frames', 'seed', 'speaker_reference', 'driving_audio', 'kept_frames')
     FUNCTION = 'plan'
     CATEGORY = CATEGORY
+
+    def check_lazy_status(self, audio_mode='generated', source_audio=None, **kwargs):
+        from .audio_modes import MODES
+        if audio_mode not in MODES:
+            raise ValueError('无效音频模式。')
+        return ['source_audio'] if audio_mode != 'generated' and source_audio is None else []
 
     def plan(self, loop_ctx, prompts, seconds, overlap_frames=22, base_seed=1087183784971949,
              segment_prompt=None, audio_mode='generated', source_audio=None):
@@ -325,7 +331,7 @@ class H3AVEncodeSegment:
     @classmethod
     def INPUT_TYPES(cls):
         return {'required': {
-            'loop_ctx': ('MIE_LOOP_CTX',), 'images': ('IMAGE',), 'audio': ('AUDIO',),
+            'loop_ctx': ('MIE_LOOP_CTX',), 'images': ('IMAGE',), 'audio': ('AUDIO', {'lazy': True}),
             'expected_frames': ('INT', {'forceInput': True}),
             'skip_frames': ('INT', {'forceInput': True}),
             'overlap_frames': ('INT', {'default': 22, 'min': 5, 'max': 90, 'step': 17}),
@@ -336,15 +342,21 @@ class H3AVEncodeSegment:
             'continuation_images': ('IMAGE',),
             'create_av_preview': ('BOOLEAN', {'default': False}),
             'kept_frames': ('INT', {'forceInput': True}),
+            'driving_audio': ('AUDIO',),
         }}
     RETURN_TYPES = ('MIE_LOOP_CTX', 'STRING', 'STRING')
     RETURN_NAMES = ('loop_ctx', 'video_path', 'diagnostics')
     FUNCTION = 'encode'
     CATEGORY = 'H3 AV Continuation/Output'
 
+    def check_lazy_status(self, audio=None, driving_audio=None, **kwargs):
+        return ['audio'] if driving_audio is None and audio is None else []
+
     def encode(self, loop_ctx, images, audio, expected_frames, skip_frames,
                overlap_frames=22, crf=19, preset='medium', reject_silence=True,
-               continuation_images=None, create_av_preview=False, kept_frames=None):
+               continuation_images=None, create_av_preview=False, kept_frames=None, driving_audio=None):
+        if driving_audio is not None:
+            audio = driving_audio
         directory, index, count = _context(loop_ctx)
         directory.mkdir(parents=True, exist_ok=True)
         _space(directory)
@@ -583,8 +595,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 from .workflow_tools import NODE_CLASS_MAPPINGS as _UI_NODES, NODE_DISPLAY_NAME_MAPPINGS as _UI_NAMES
 NODE_CLASS_MAPPINGS.update(_UI_NODES)
 NODE_DISPLAY_NAME_MAPPINGS.update(_UI_NAMES)
-from .audio_modes import NODE_CLASS_MAPPINGS as _AUDIO_NODES
-NODE_CLASS_MAPPINGS.update(_AUDIO_NODES)
 
 
 # Keep stable node IDs and socket keys for existing workflows.

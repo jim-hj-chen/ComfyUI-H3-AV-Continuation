@@ -37,7 +37,7 @@ class H3AVReferenceListToVideo:
             'width': ('INT', {'default': 1344, 'min': 32, 'max': 16384, 'step': 32}),
             'height': ('INT', {'default': 768, 'min': 32, 'max': 16384, 'step': 32}),
             'length': ('INT', {'default': 124, 'min': 5, 'max': 3600, 'step': 17}),
-            'ref_image_size': (['match', 'max'], {'default': 'match'}),
+            'ref_image_size': (['match', 'max'], {'default': 'max'}),
         }, 'optional': {
             'vae': ('VAE',),
             'audio_vae': ('VAE',),
@@ -74,7 +74,7 @@ class H3AVReferenceListToVideo:
         return refs
 
     def encode(self, clip, images, prompt, width, height, length,
-               ref_image_size='match', vae=None, audio_vae=None,
+               ref_image_size='max', vae=None, audio_vae=None,
                previous_frames=None, previous_audio=None, speaker_reference=None, driving_audio=None):
         import time
         from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo

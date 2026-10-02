@@ -8,24 +8,17 @@ ComfyUI nodes for long MiniMax H3 workflows: segment planning, multi-image refer
 
 Uses 24 fps. Video windows must satisfy `17k+5`; the planner accepts 124–362 frames. Continuation context also uses `17k+5`, defaulting to 22 frames (about 0.917 s). Requested durations round up to a compatible window, so actual new duration can be longer. Context supports continuity but does not guarantee lip sync, voice or presenter identity for every generation.
 
-## Audio modes and optional stages
+## Audio modes and existing Goohaitool controls
 
-`H3AVAudioModes` has two separate toggles, **Voice Reference** and **Audio Drives Video**, both off by default. Enabling one in the canvas disables the other immediately. Conflicting API inputs are rejected. Connect Load Audio to `audio`, then connect `audio_mode` and `source_audio` to the planner. Both toggles off retains the existing joint generation path; the lazy audio input is not executed.
+Use the installed Goohaitool **Ignore Multiple Groups** controller for all optional stages. Set its filter to `处理 ·`, mode to `default`, and leave its three rows (second pass, upscale, AudioRefine) off initially. Keep Set/Get ports and VAE decoders outside these bypass groups. No custom switch nodes or mutual-exclusion JavaScript are required.
 
-- Voice Reference: the planner supplies the first three seconds of the loaded recording to `speaker_reference`. Connect this output to the reference node. H3 generates the script's new speech, borrowing speaker identity, timbre and accent. The recording is not replayed and the prompt's language is preserved.
-- Audio Drives Video: connect planner `driving_audio` to the reference node's matching input. The source audio is encoded into the joint latent with a native per-stream noise mask: video generates, audio stays fixed. Shot instructions should agree with the supplied recording. Mouth motion still depends on H3; exact phoneme alignment is not guaranteed.
+Use a second Goohaitool controller with filter `音频 ·` and mode `at_most_one`. Its two separate rows, Voice Reference and Audio Drive, are mutually exclusive and can both be off. Each group contains a STRING constant (`voice_reference` or `audio_drive`). Connect them to `GoohaiAnySwitch` slots 1 and 2, and an always-active `generated` constant to slot 3. Connect the result to the planner `audio_mode`, and Load Audio to `source_audio`. Loading is lazy and skipped in generated mode.
 
-In Audio Drive mode, each segment keeps `round(seconds * 24)` new frames. The planner uses the committed output frame count as the source-audio cursor, prepends the matching source context, and pads only the H3 grid surplus. Connect `kept_frames` to the writer so that surplus is removed from video/audio together. This prevents cumulative drift. Supply a continuous recording covering the sum of segment durations; short recordings fail before sampling the affected segment, rather than stretching or repeating speech. Trailing audio beyond the configured durations is not included.
+Voice Reference uses up to three seconds of loaded speech as timbre reference for new scripted dialogue. Audio Drive encodes the continuous source recording into the native audio latent and freezes it with the native stream noise mask. Connect planner `driving_audio` to both the reference encoder and the segment writer, and `kept_frames` to the writer. The writer uses source speech and skips audio decoding when driving audio is present. Retained frames are `round(seconds × 24)`; discarded H3 grid padding does not enter the soundtrack or continuation tail. The source must cover the sum of segment durations. Mouth-motion quality still depends on H3. Keep AudioRefine off when using Audio Drive, as its audio processing would be discarded.
 
-Use `H3AVAudioOutput` before the writer: connect the mode, decoded model audio, and planner driving audio. It selects the original source recording in drive mode and skips audio decoding. The writer still converts it to frame-aligned stereo PCM and encodes AAC once at final assembly. Source speech is retained; output is not a byte-for-byte copy of the uploaded file.
+Reference sizing defaults to **max**. Optional second pass, SeedVR2 upscale, AudioRefine, and segment AV previews are off by default in the supplied workflow. AudioRefine remains available through the external [ComfyUI-H3-AudioRefine](https://github.com/Adudeguyman/ComfyUI-H3-AudioRefine) extension. Do not mix the old custom switches with group bypass.
 
-`H3AVOptionalVideoRefine`, `H3AVOptionalUpscale` and `H3AVOptionalAudioRefine` provide independent lazy switches, off by default. Connect the unprocessed input to `original` and the processed branch to `refined`. Keep stage nodes active; the switch decides which branch executes. AudioRefine is always skipped in Audio Drive mode, even if its switch is on. When retained, AudioRefine requires the external [ComfyUI-H3-AudioRefine pack](https://github.com/Adudeguyman/ComfyUI-H3-AudioRefine).
-
-For a faster baseline, use reference image sizing `match`, disable optional stages, and disable extra per-segment previews. Native H3 warns that `max` reference tokens can make each sampling step several times slower. The AudioRefine author's measurements are hardware-specific, and its frozen cache requires additional RAM/VRAM; it is an optional repair stage, not a long-video requirement.
-
-FFmpeg subprocesses and rawvideo pipe writes now have a 600-second limit and honor ComfyUI interruption. Override with `H3_FFMPEG_TIMEOUT_SECONDS` when a legitimately slow encode needs longer. Errors include the log path and preserve committed segments. This timeout does not terminate GPU sampling or fix a CUDA driver deadlock. Stage start/end messages identify whether time is spent in conditioning, sampling or output encoding.
-
-Existing node IDs, original socket positions and planner output slots 0–6 remain compatible. New planner outputs are 7 `driving_audio` and 8 `kept_frames`; all new inputs are appended and optional.
+The latent upscaler's `force_unload` moves its own cached weights to CPU; it does not directly unload H3. Leaving those weights resident consumes GPU memory and is not a proven speed improvement on a 32GB GPU. FFmpeg retains bounded waits (600 seconds by default), interrupt handling, and start/end logging; this does not time out GPU sampling. Original node IDs and planner outputs 0–6 remain compatible. New inputs are optional and appended.
 
 ## Installation
 
@@ -235,7 +228,7 @@ Load 1–9 IMAGE_LIST paths as separate native H3 references, with optional vide
 | `width` | Video Width | INT / `1344` | Target video width in pixels; use multiples of 32 for this reference encoder. |
 | `height` | Video Height | INT / `768` | Target video height in pixels; use multiples of 32 for this reference encoder. |
 | `length` | Generation Window Frames | INT / `124` | Total generated frames, not seconds. For segmented continuation, connect the planner window_frames output. |
-| `ref_image_size` | Reference Image Sizing | match/max / `match` | match uses the target dimensions; max delegates the maximum reference sizing strategy to the native H3 encoder. |
+| `ref_image_size` | Reference Image Sizing | match/max / `max` | match uses the target dimensions; max delegates the maximum reference sizing strategy to the native H3 encoder. |
 | `vae` | Video VAE | VAE / optional | Native H3 video encoder/decoder required when using video guides or references. |
 | `audio_vae` | Audio VAE | VAE / optional | Native H3 audio encoder/decoder required when using audio guides or references. |
 | `previous_frames` | Previous Video Context | IMAGE / optional | Final context frames from the preceding segment; empty on the first segment. |

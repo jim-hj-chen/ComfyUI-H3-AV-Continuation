@@ -46,15 +46,13 @@ class AudioContracts(unittest.TestCase):
 
     def tearDown(self): self.fake.stop()
 
-    def test_two_modes_and_backend_conflict(self):
-        node = pack.NODE_CLASS_MAPPINGS['H3AVAudioModes']()
-        self.assertEqual(node.check_lazy_status(False, False), [])
-        self.assertEqual(node.route(), ('generated', None))
-        self.assertEqual(node.check_lazy_status(True, False), ['audio'])
-        self.assertEqual(node.route(True, False, self.audio)[0], 'voice_reference')
-        self.assertEqual(node.route(False, True, self.audio)[0], 'audio_drive')
-        with self.assertRaises(ValueError): node.route(True, True, self.audio)
-        with self.assertRaises(ValueError): node.route(True, False)
+    def test_planner_loads_source_only_for_selected_mode(self):
+        node = pack.H3AVSegmentPlan()
+        self.assertEqual(node.check_lazy_status(), [])
+        for mode in ('voice_reference','audio_drive'):
+            self.assertEqual(node.check_lazy_status(audio_mode=mode), ['source_audio'])
+            self.assertEqual(node.check_lazy_status(audio_mode=mode,source_audio=self.audio), [])
+        with self.assertRaises(ValueError): node.check_lazy_status(audio_mode='invalid')
 
     def test_continuous_source_slices_and_discarded_padding(self):
         from pack_under_test.audio_modes import driving_window
@@ -67,20 +65,12 @@ class AudioContracts(unittest.TestCase):
         self.assertFalse(second[..., 2840:].any())
         with self.assertRaises(ValueError): driving_window(self.audio, 120, 144, 175, 22)
 
-    def test_lazy_routes_protect_source_and_skip_refinement(self):
-        output = pack.NODE_CLASS_MAPPINGS['H3AVAudioOutput']()
-        self.assertEqual(output.check_lazy_status('audio_drive'), ['driving_audio'])
-        self.assertIs(output.select('audio_drive', driving_audio=self.audio)[0], self.audio)
-        switch = pack.NODE_CLASS_MAPPINGS['H3AVOptionalAudioRefine']()
-        self.assertEqual(switch.check_lazy_status(True, 'audio_drive'), ['original'])
-        self.assertEqual(switch.check_lazy_status(False, 'generated'), ['original'])
-        self.assertEqual(switch.check_lazy_status(True, 'voice_reference'), ['refined'])
-        original = {'samples': 'original'}
-        self.assertIs(switch.select(True, 'audio_drive', original)[0], original)
-        for name in ('H3AVOptionalVideoRefine', 'H3AVOptionalUpscale'):
-            route = pack.NODE_CLASS_MAPPINGS[name]()
-            self.assertEqual(route.check_lazy_status(False), ['original'])
-            self.assertEqual(route.check_lazy_status(True), ['refined'])
+    def test_writer_skips_decoding_when_source_is_present(self):
+        node = pack.H3AVEncodeSegment()
+        self.assertEqual(node.check_lazy_status(), ['audio'])
+        self.assertEqual(node.check_lazy_status(driving_audio=self.audio), [])
+        self.assertEqual(node.check_lazy_status(audio=self.audio), [])
+        self.assertTrue(node.INPUT_TYPES()['required']['audio'][1]['lazy'])
 
     def test_prompt_does_not_force_mandarin_and_voice_tags_match(self):
         self.assertNotIn('Mandarin', pack.prepare_prompt('English speech.', 0, 124, 0, 22))
@@ -121,7 +111,7 @@ class AudioContracts(unittest.TestCase):
                     planned = pack.H3AVSegmentPlan().plan(ctx, 'a' + pack.DELIMITER + 'b', 5, audio_mode='audio_drive', source_audio=audio)
                     self.assertEqual(planned[8], 120)
                     images = tensor(np.ones((planned[1], 32, 32, 3)) * (0.2 + index * 0.3))
-                    pack.H3AVEncodeSegment().encode(ctx, images, planned[7], planned[1], planned[4], kept_frames=planned[8])
+                    pack.H3AVEncodeSegment().encode(ctx, images, None, planned[1], planned[4], kept_frames=planned[8], driving_audio=planned[7])
                 run = directory / 'h3_av_sync' / ctx['run_id']
                 manifest = json.loads((run / 'manifest.json').read_text())
                 self.assertEqual([x['output_frames'] for x in manifest['segments']], [120, 120])
