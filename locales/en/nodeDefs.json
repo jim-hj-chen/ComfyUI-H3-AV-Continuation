@@ -274,30 +274,30 @@
     }
   },
   "H3AVSamplingSteps": {
-    "display_name": "H3 Two-Pass Sampling Step Splitter",
-    "description": "Split a total sampling budget into first-pass and second-pass step counts.",
+    "display_name": "H3 First/Second-Pass Sampling Steps",
+    "description": "Set first-pass and second-pass steps independently. The existing Goohaitool group controls whether the second pass runs; bypassing it leaves the first-pass count unchanged.",
     "inputs": {
-      "总步数": {
-        "name": "Total Sampling Steps",
-        "tooltip": "Total steps across both passes; must be greater than the first-pass count and no more than 10000."
-      },
       "一采步数": {
         "name": "First-Pass Steps",
-        "tooltip": "Steps for the first pass; must be at least 1 and below total steps."
+        "tooltip": "Independent first-pass step count, from 1 to 10000. With the second-pass group off, the first pass runs exactly this many steps."
+      },
+      "二采步数": {
+        "name": "Second-Pass Steps",
+        "tooltip": "Independent second-pass step count, from 1 to 10000. Used only when the existing Goohaitool second-pass group is enabled."
       }
     },
     "outputs": {
       "0": {
         "name": "First-Pass Steps",
-        "tooltip": "Steps for the first pass; must be at least 1 and below total steps."
+        "tooltip": "Configured first-pass steps. Connect to the first sampler scheduler."
       },
       "1": {
         "name": "Second-Pass Steps",
-        "tooltip": "Computed as total steps minus first-pass steps; always at least 1."
+        "tooltip": "Configured second-pass steps. The second sampler runs only when its Goohaitool group is enabled."
       },
       "2": {
-        "name": "Total Sampling Steps",
-        "tooltip": "Total steps across both passes; must be greater than the first-pass count and no more than 10000."
+        "name": "Configured Total Steps",
+        "tooltip": "First-pass plus second-pass steps for compatibility. This is a configured sum, not the executed total when the second pass is bypassed."
       }
     }
   },
@@ -360,6 +360,10 @@
       "driving_audio": {
         "name": "Driving Audio Window",
         "tooltip": "Frame-aligned source recording with continuation context and discarded grid padding."
+      },
+      "loop_ctx": {
+        "name": "Reference Cache Loop Context",
+        "tooltip": "Connect the same MieLoop run context to reuse fixed-image VAE latents across segments. The bounded CPU cache clears after the last segment; text/visual, video and audio conditions remain live."
       }
     },
     "outputs": {

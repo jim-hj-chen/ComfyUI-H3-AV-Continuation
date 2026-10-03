@@ -53,8 +53,8 @@ class LocalizationContract(unittest.TestCase):
             'H3AVContinuationGuide': ['loop_ctx', 'positive', 'latent', 'vae', 'audio_vae', 'previous_frames', 'previous_audio'],
             'H3AVEncodeSegment': ['loop_ctx', 'images', 'audio', 'expected_frames', 'skip_frames', 'overlap_frames', 'crf', 'preset', 'reject_silence', 'continuation_images', 'create_av_preview', 'kept_frames', 'driving_audio'],
             'H3AVConcat': ['loop_ctx', 'done'],
-            'H3AVSamplingSteps': ['总步数', '一采步数'],
-            'H3AVReferenceListToVideo': ['clip', 'images', 'prompt', 'width', 'height', 'length', 'ref_image_size', 'vae', 'audio_vae', 'previous_frames', 'previous_audio', 'speaker_reference', 'driving_audio'],
+            'H3AVSamplingSteps': ['一采步数', '二采步数'],
+            'H3AVReferenceListToVideo': ['clip', 'images', 'prompt', 'width', 'height', 'length', 'ref_image_size', 'vae', 'audio_vae', 'previous_frames', 'previous_audio', 'speaker_reference', 'driving_audio', 'loop_ctx'],
         } if AV else {
             'H3DiskEncodeSegment': ['loop_ctx', 'images', 'audio', 'fps', 'crf', 'preset'],
             'H3DiskConcat': ['loop_ctx', 'done'],
@@ -97,12 +97,20 @@ class LocalizationContract(unittest.TestCase):
                 pack.frame_plan(seconds, 1, overlap)
 
     @unittest.skipUnless(AV, 'H3 sampling controls only')
-    def test_two_pass_step_split_preserves_chinese_api_keys(self):
+    def test_independent_step_counts_and_legacy_named_calls(self):
         steps = pack.NODE_CLASS_MAPPINGS['H3AVSamplingSteps']()
+        self.assertEqual(steps.split(), (10, 4, 14))
+        self.assertEqual(steps.split(**{'一采步数': 14, '二采步数': 4}), (14, 4, 18))
+        self.assertEqual(steps.split(**{'一采步数': 10000, '二采步数': 10000}), (10000, 10000, 20000))
         self.assertEqual(steps.split(**{'总步数': 16, '一采步数': 10}), (10, 6, 16))
-        for total, first in ((1, 1), (16, 16), (16, 0), (10001, 1)):
+        self.assertEqual(steps.split(**{'总步数': 14, '一采步数': 14}), (14, 1, 15))
+        for first, second in ((0, 4), (14, 0), (10001, 1), (1, 10001), (True, 4), (10, 4.5), (float('nan'), 4)):
             with self.assertRaises(ValueError):
-                steps.split(total, first)
+                steps.split(**{'一采步数': first, '二采步数': second})
+        with self.assertRaises(ValueError):
+            steps.split(**{'总步数': 10, '一采步数': 14})
+        with self.assertRaises(ValueError):
+            steps.split(**{'总步数': 14, '一采步数': 10, '二采步数': 4})
 
     @unittest.skipUnless(AV, 'H3 script picker only')
     def test_script_picker_handles_list_and_wrapped_list(self):

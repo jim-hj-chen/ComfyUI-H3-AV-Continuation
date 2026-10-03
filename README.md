@@ -197,22 +197,24 @@ Copy H.264 segments and encode the concatenated PCM audio to AAC once for the fi
 | --- | --- | --- | --- |
 | 0 | Final MP4 Path | `STRING` | Absolute path to the synchronized final H.264/AAC MP4. |
 
-### H3 Two-Pass Sampling Step Splitter
+### H3 Independent Sampling Steps
 
 `H3AVSamplingSteps`
 
-Split a total sampling budget into first-pass and second-pass step counts.
+Set each pass independently. The existing Goohaitool group controls whether the second pass runs. Closing it leaves the first-pass count unchanged and skips the latent upscaler and second sampler.
 
 | Input (internal key) | Label | Type / default | Purpose |
 | --- | --- | --- | --- |
-| `总步数` | Total Sampling Steps | INT / `16` | Total steps across both passes; must be greater than the first-pass count and no more than 10000. |
-| `一采步数` | First-Pass Steps | INT / `10` | Steps for the first pass; must be at least 1 and below total steps. |
+| `一采步数` | First-Pass Steps | INT / `10` | Independent first-pass count, 1–10000. |
+| `二采步数` | Second-Pass Steps | INT / `4` | Independent second-pass count, 1–10000; only executes when its Goohaitool group is enabled. |
 
 | Output index | Label | Type | Meaning |
 | --- | --- | --- | --- |
-| 0 | First-Pass Steps | `INT` | Steps for the first pass; must be at least 1 and below total steps. |
-| 1 | Second-Pass Steps | `INT` | Computed as total steps minus first-pass steps; always at least 1. |
-| 2 | Total Sampling Steps | `INT` | Total steps across both passes; must be greater than the first-pass count and no more than 10000. |
+| 0 | First-Pass Steps | `INT` | First-pass count. |
+| 1 | Second-Pass Steps | `INT` | Second-pass count. |
+| 2 | Configured Step Sum | `INT` | Sum of the two configured counts, retained for socket compatibility; not the executed count when the second pass is bypassed. |
+
+The frontend migrates old inline `[total, first]` values to independent `[first, second]` once, with a version marker. Old `14/14` becomes `14/1` and can run one pass. Legacy external widget links require manual migration because their arithmetic meaning differs. Raw API clients must replace `总步数` with `二采步数`; loading an old workflow in the frontend performs that change automatically.
 
 ### H3 Multi-Reference Video Conditioning
 
@@ -234,11 +236,19 @@ Load 1–9 IMAGE_LIST paths as separate native H3 references, with optional vide
 | `previous_frames` | Previous Video Context | IMAGE / optional | Final context frames from the preceding segment; empty on the first segment. |
 | `previous_audio` | Previous Audio Context | AUDIO / optional | Audio aligned with the preceding video context; empty on the first segment. |
 | `speaker_reference` | Speaker Voice Reference | AUDIO / optional | Up to the first three seconds of the first segment audio, used as a speaker identity reference in later segments. |
+| `driving_audio` | Driving Audio Window | AUDIO / optional | Encodes the source recording into a frozen audio stream for audio-driven video. |
+| `loop_ctx` | Reference Cache Loop Context | MIE_LOOP_CTX / optional | Connect the same loop context to share fixed-image VAE latents across segments in this run. |
 
 | Output index | Label | Type | Meaning |
 | --- | --- | --- | --- |
 | 0 | Positive Conditioning | `CONDITIONING` | H3 positive conditioning; the continuation guide adds the paired context at frame zero after the first segment. |
 | 1 | Initial Joint Latent | `LATENT` | Initial native H3 joint video/audio latent returned by the reference encoder. |
+
+Fixed-image caching is automatic when `loop_ctx` is connected. A local VAE proxy reuses only native image encodings, keyed by the actual resized RGB pixels, shape, dtype and VAE/model/patch identity. Native resizing, reference order and `max` sizing are preserved. Changed images, resized inputs or VAE patches invalidate the corresponding entry. Each hit returns a copy on the VAE output device with the original dtype; no global Comfy model methods are patched.
+
+The shared CPU LRU holds at most 256 MiB of latents and clears a run after its last reference call. It never retains model objects or fixed-image tensors in GPU memory. Without `loop_ctx`, the node uses normal uncached encoding. For nine square 3840×3840 inputs, current native `max` reduces each to 2048×2048; nine float32 H3 image latents occupy approximately 13.5 MiB. Image loading/resizing, Qwen text/visual conditioning, continuation video and all audio remain live for every segment. Cache hits do not reduce reference tokens in diffusion.
+
+Logs show hit/miss counts and wall times for image reading, fixed-image VAE/cache, continuation video VAE, reference audio VAE, text/visual conditioning, driving audio VAE and native resizing/other work. The old combined reference-encoding duration is not entirely avoidable: for four segments the saving is approximately three sets of fixed-image VAE encoding, less cache lookup/copy time. Measure those new logs before estimating an end-to-end speedup. The original [native H3 reference encoder](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy_extras/nodes_minimax_h3.py) and [VAE interface](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy/sd.py) remain responsible for model execution.
 
 ## Files and troubleshooting
 
@@ -259,4 +269,4 @@ python -m unittest discover -s tests -v
 node --test tests/*.test.mjs
 ```
 
-Tests cover bilingual node/parameter/option completeness, stable node/socket compatibility, language switching without changing connections or values, and core planning or loop-control branches. Real model generation requires ComfyUI with H3 and MieLoop installed.
+Tests cover bilingual metadata, stable socket compatibility, independent step migration, bounded cache reuse/invalidation, live per-segment conditions for all three audio modes, exception propagation and real FFmpeg timing/cancellation. Real model generation requires ComfyUI with H3 and MieLoop installed; CPU tests cannot measure GPU speedups or generated lip-sync quality.

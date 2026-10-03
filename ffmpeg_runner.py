@@ -32,6 +32,13 @@ def run_ffmpeg(cmd, log, frames=None, timeout=None):
                 proc.stdin.close()
             except BaseException as exc:
                 errors.append(exc)
+            finally:
+                # A killed encoder can break write() before the normal close.
+                # Release the pipe when its writer exits, including cancellation.
+                try:
+                    proc.stdin.close()
+                except OSError:
+                    pass
 
         try:
             if frames is not None:

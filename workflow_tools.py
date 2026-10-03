@@ -1,25 +1,7 @@
 """Small UI helpers for the H3 workflow; native H3 still performs conditioning."""
 from pathlib import Path
-
-
-class H3AVSamplingSteps:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {'required': {
-            '总步数': ('INT', {'default': 16, 'min': 2, 'max': 10000}),
-            '一采步数': ('INT', {'default': 10, 'min': 1, 'max': 9999}),
-        }}
-
-    RETURN_TYPES = ('INT', 'INT', 'INT')
-    RETURN_NAMES = ('一采步数', '二采步数', '总步数')
-    FUNCTION = 'split'
-    CATEGORY = 'H3 AV Continuation/Controls'
-
-    def split(self, 总步数=16, 一采步数=10):
-        total_steps, first_steps = 总步数, 一采步数
-        if not 1 <= int(first_steps) < int(total_steps) <= 10000:
-            raise ValueError('步数需要满足：1 ≤ 一采步数 < 总步数 ≤ 10000。')
-        return int(first_steps), int(total_steps) - int(first_steps), int(total_steps)
+from .sampling_steps import H3AVSamplingSteps
+from .reference_cache import CACHE, VideoVAEProxy, TimedProxy, image_shapes, loop_scope, new_timings
 
 
 class H3AVReferenceListToVideo:
@@ -45,6 +27,7 @@ class H3AVReferenceListToVideo:
             'previous_audio': ('AUDIO',),
             'speaker_reference': ('AUDIO',),
             'driving_audio': ('AUDIO',),
+            'loop_ctx': ('MIE_LOOP_CTX',),
         }}
 
     RETURN_TYPES = ('CONDITIONING', 'LATENT')
@@ -75,20 +58,34 @@ class H3AVReferenceListToVideo:
 
     def encode(self, clip, images, prompt, width, height, length,
                ref_image_size='max', vae=None, audio_vae=None,
-               previous_frames=None, previous_audio=None, speaker_reference=None, driving_audio=None):
+               previous_frames=None, previous_audio=None, speaker_reference=None, driving_audio=None, loop_ctx=None):
         import time
-        from comfy_extras.nodes_minimax_h3 import MiniMaxH3ReferenceToVideo
-        refs = self.load_references(images)
+        from importlib import import_module
+        native = import_module('comfy_extras.nodes_minimax_h3')
         started = time.monotonic()
+        refs = self.load_references(images)
+        loaded = time.monotonic() - started
+        scope, final_segment = loop_scope(loop_ctx)
+        timings = new_timings()
+        video_proxy = VideoVAEProxy(vae, scope, image_shapes(refs, width, height, ref_image_size,
+            getattr(native, 'REF_IMAGE_SHORT_EDGE', 2048), getattr(native, 'CANVAS_MULTIPLE', 32)), timings) if vae is not None else None
+        audio_proxy = TimedProxy(audio_vae, timings, {'encode': 'reference_audio'}) if audio_vae is not None else None
+        clip_proxy = TimedProxy(clip, timings, {'tokenize': 'text_visual', 'encode_from_tokens_scheduled': 'text_visual'})
         print(f'[H3AVSync] 参考条件编码开始：{len(refs)} 张图片，尺寸策略 {ref_image_size}。', flush=True)
-        result = MiniMaxH3ReferenceToVideo.execute(
-            clip=clip, prompt=prompt, width=width, height=height, length=length,
-            ref_image_size=ref_image_size, vae=vae, audio_vae=audio_vae,
-            ref_images=refs,
-            ref_videos={'ref_video_0': previous_frames} if previous_frames is not None else {},
-            ref_video_audios={'ref_video_audio_0': previous_audio} if previous_audio is not None else {},
-            ref_audios={'ref_audio_0': speaker_reference} if speaker_reference is not None else {},
-        )
+        try:
+            result = native.MiniMaxH3ReferenceToVideo.execute(
+                clip=clip_proxy, prompt=prompt, width=width, height=height, length=length,
+                ref_image_size=ref_image_size, vae=video_proxy, audio_vae=audio_proxy,
+                ref_images=refs,
+                ref_videos={'ref_video_0': previous_frames} if previous_frames is not None else {},
+                ref_video_audios={'ref_video_audio_0': previous_audio} if previous_audio is not None else {},
+                ref_audios={'ref_audio_0': speaker_reference} if speaker_reference is not None else {},
+            )
+        finally:
+            # The last reference call has already retrieved copies. Dropping CPU
+            # entries cannot alter any conditioning tensors still in use.
+            if final_segment:
+                CACHE.release(scope)
         # V3 NodeOutput is tuple-like through .result; accept old tuple returns too.
         positive, latent = tuple(result.result) if hasattr(result, 'result') else tuple(result)
         if driving_audio is not None:
@@ -98,7 +95,9 @@ class H3AVReferenceListToVideo:
             from comfy.nested_tensor import NestedTensor
             import torch
             import torch.nn.functional as F
+            driving_started = time.monotonic()
             encoded, _ = _encode_ref_audio(audio_vae, driving_audio)
+            timings['driving_audio'] = time.monotonic() - driving_started
             video, empty_audio = latent['samples'].unbind()
             if encoded.shape[:-1] != empty_audio.shape[:-1] or abs(encoded.shape[-1] - empty_audio.shape[-1]) > 2:
                 raise ValueError('驱动音频 VAE 的时间维度与 H3 窗口不匹配。')
@@ -109,7 +108,13 @@ class H3AVReferenceListToVideo:
             latent['noise_mask'] = NestedTensor((
                 torch.ones((1, 1, *video.shape[2:]), dtype=torch.float32),
                 torch.zeros((1, 1, *empty_audio.shape[2:]), dtype=torch.float32)))
-        print(f'[H3AVSync] 参考条件编码完成：{time.monotonic() - started:.1f}s，开始采样。', flush=True)
+        if video_proxy is not None:
+            detail = f'；{video_proxy.reason}' if video_proxy.reason else ''
+            print(f'[H3AVSync] 固定图缓存：命中 {video_proxy.hits}/{len(refs)}，实际编码 {video_proxy.misses} 张；CPU缓存 {CACHE.usage() / 1048576:.1f} MiB{detail}。', flush=True)
+        elapsed = time.monotonic() - started
+        other = max(0.0, elapsed - loaded - sum(timings.values()))
+        print(f'[H3AVSync] 条件分项：读取图片 {loaded:.1f}s；固定图VAE/缓存 {timings["fixed_images"]:.1f}s；续写视频VAE {timings["previous_video"]:.1f}s；参考音频VAE {timings["reference_audio"]:.1f}s；文本/视觉条件 {timings["text_visual"]:.1f}s；驱动音频VAE {timings["driving_audio"]:.1f}s；原生缩放/其他 {other:.1f}s。', flush=True)
+        print(f'[H3AVSync] 参考条件编码完成：{elapsed:.1f}s，开始采样。', flush=True)
         return positive, latent
 
 
@@ -118,6 +123,6 @@ NODE_CLASS_MAPPINGS = {
     'H3AVReferenceListToVideo': H3AVReferenceListToVideo,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    'H3AVSamplingSteps': '采样步数 · 总数 / 一采 / 二采',
+    'H3AVSamplingSteps': '采样步数 · 一采 / 二采',
     'H3AVReferenceListToVideo': 'H3 参考图自动适配',
 }
